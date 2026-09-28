@@ -1,50 +1,78 @@
 ## 📸 Project Walkthrough
 
-<table>
-<tr>
+<details open>
+<summary>01 — Smart File Finder</summary>
 
-<td>
-<img src="https://github.com/user-attachments/assets/927ea47b-1802-4086-b125-ca124cf5e5a5" width="420">
-<p align="center"><b>01 — Smart File Finder</b></p>
-</td>
+<p align="center">
+<img src="https://github.com/user-attachments/assets/927ea47b-1802-4086-b125-ca124cf5e5a5" width="100%">
+</p>
 
-<td>
-<img src="https://github.com/user-attachments/assets/ebc15758-9a89-472a-a84f-ad2a92e32436" width="420">
-<p align="center"><b>02 — Search Only Works If You Remember Exactly</b></p>
-</td>
+</details>
 
-<td>
-<img src="https://github.com/user-attachments/assets/0eb7dae0-8d91-42b4-9a34-4d2a5acc6df5" width="420">
-<p align="center"><b>03 — Describe It Naturally</b></p>
-</td>
+<details>
+<summary>02 — Search Only Works If You Remember Exactly</summary>
 
-<td>
-<img src="https://github.com/user-attachments/assets/46e8de5c-0fd8-4b31-81d2-74a4cac046a7" width="420">
-<p align="center"><b>04 — Self-Checking Retrieval</b></p>
-</td>
+<p align="center">
+<img src="https://github.com/user-attachments/assets/ebc15758-9a89-472a-a84f-ad2a92e32436" width="100%">
+</p>
 
-<td>
-<img src="https://github.com/user-attachments/assets/7fb76e59-33c1-4fe0-a15a-b17b9dbe9db0" width="420">
-<p align="center"><b>05 — Local Models & Storage</b></p>
-</td>
+</details>
 
-<td>
-<img src="https://github.com/user-attachments/assets/28139ad4-baf0-403e-997d-f3e5b6f816e9" width="420">
-<p align="center"><b>06 — Built for Daily Use</b></p>
-</td>
+<details>
+<summary>03 — Describe It Naturally. Find It Instantly. Stay Private.</summary>
 
-<td>
-<img src="YOUR_SLIDE_7_IMAGE_URL" width="420">
-<p align="center"><b>07 — Measured, Not Assumed</b></p>
-</td>
+<p align="center">
+<img src="https://github.com/user-attachments/assets/0eb7dae0-8d91-42b4-9a34-4d2a5acc6df5" width="100%">
+</p>
 
-<td>
-<img src="https://github.com/user-attachments/assets/a2e324d4-7791-493e-9999-ad9b2d6e8d3d" width="420">
-<p align="center"><b>08 — What's Next</b></p>
-</td>
+</details>
 
-</tr>
-</table>
+<details>
+<summary>04 — A Retrieval Pipeline That Checks Its Own Confidence</summary>
+
+<p align="center">
+<img src="https://github.com/user-attachments/assets/46e8de5c-0fd8-4b31-81d2-74a4cac046a7" width="100%">
+</p>
+
+</details>
+
+<details>
+<summary>05 — Local Models. Local Storage. No External Calls.</summary>
+
+<p align="center">
+<img src="https://github.com/user-attachments/assets/7fb76e59-33c1-4fe0-a15a-b17b9dbe9db0" width="100%">
+</p>
+
+</details>
+
+<details>
+<summary>06 — Built for Daily Use. Not Just a Demo.</summary>
+
+<p align="center">
+<img src="https://github.com/user-attachments/assets/28139ad4-baf0-403e-997d-f3e5b6f816e9" width="100%">
+</p>
+
+</details>
+
+<details>
+<summary>07 — Measured. Not Assumed.</summary>
+
+<p align="center">
+<img src="YOUR_SLIDE_7_IMAGE_URL" width="100%">
+</p>
+
+</details>
+
+<details>
+<summary>08 — What's Next</summary>
+
+<p align="center">
+<img src="https://github.com/user-attachments/assets/a2e324d4-7791-493e-9999-ad9b2d6e8d3d" width="100%">
+</p>
+
+</details>
+tr>
+
 # Smart File Finder
 
 A desktop app that finds files by what's actually *inside* them — including
