@@ -1,4 +1,4 @@
-## 📸 Project Walkthrough
+## Project Walkthrough
 
 <details open>
 <summary>01 — Smart File Finder</summary>
@@ -71,6 +71,7 @@
 </p>
 
 </details>
+
 
 # Smart File Finder
 
