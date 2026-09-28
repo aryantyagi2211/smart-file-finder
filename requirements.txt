@@ -1,0 +1,15 @@
+﻿watchdog
+PyQt6
+chromadb
+sentence-transformers
+onnxruntime
+pytest
+pyinstaller
+pypdf
+keyboard
+transformers
+bitsandbytes
+accelerate
+python-docx
+qtawesome
+pillow

@@ -1,0 +1,26 @@
+[
+  {
+    "query": "adaptive retrieval augmented generation based on question complexity",
+    "expected_file": "test_data\\Adaptive rag.pdf"
+  },
+  {
+    "query": "corrective retrieval and confidence checking",
+    "expected_file": "test_data\\corrective rag.pdf"
+  },
+  {
+    "query": "generator discriminator noise vector backpropagation loss",
+    "expected_file": "test_data\\Generative_AI_and_GAN_notes.pdf"
+  },
+  {
+    "query": "agentic system design roadmap and pillars",
+    "expected_file": "test_data\\Agentic_System_Design_Roadmap.pdf"
+  },
+  {
+    "query": "standard RAG baseline retrieval augmented generation setup",
+    "expected_file": "test_data\\10 RAG Architectures (1).pdf"
+  },
+  {
+    "query": "completely unrelated query about medieval castle architecture in france",
+    "expected_file": null
+  }
+]

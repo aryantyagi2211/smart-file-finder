@@ -1,0 +1,6 @@
+venv/
+dist/
+dist_installer/
+build/
+__pycache__/
+.pytest_cache/
