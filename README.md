@@ -71,7 +71,6 @@
 </p>
 
 </details>
-tr>
 
 # Smart File Finder
 
