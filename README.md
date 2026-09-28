@@ -1,6 +1,12 @@
-<img width="2400" height="1426" alt="2_Search-Only-Works-If-You-Remember-Exactly" src="https://github.com/user-attachments/assets/cc138539-c54d-485b-96d0-6e6475ad1ae0" />
-<img width="2400" heig<img width="2400" height="1350" alt="3_Describe-It-Naturally-Find-It-Instantly-Stay-Private" src="https://github.com/user-attachments/assets/a11c5a30-6def-46c6-a94d-0fd3edd28fd6" />
-ht="1350" alt="1_Smart-File-Finder" src="https://github.com/user-attachments/assets/4b611a40-5abd-4ab3-b675-ea52fc5be2ce" />
+<img width="2400" height="1350" alt="9_Smart-File-Finder" src="https://github.com/user-attachments/assets/2fd657df-5d8c-4a56-82cb-2a14152fd489" />
+<img width="2400" height="1350" alt="5_Local-Models-Local-Storage-No-External-Calls" src="https://github.com/user-attachments/assets/7fb76e59-33c1-4fe0-a15a-b17b9dbe9db0" />
+<img width="2400" height="1520" alt="4_A-Retrieval-Pipeline-That-Checks-Its-Own-Confidence" src="https://github.com/user-attachments/assets/46e8de5c-0fd8-4b31-81d2-74a4cac046a7" />
+<img width="2400" height="1350" alt="3_Describe-It-Naturally-Find-It-Instantly-Stay-Private" src="https://github.com/user-attachments/assets/0eb7dae0-8d91-42b4-9a34-4d2a5acc6df5" />
+<img width="2400" height="1426" alt="2_Search-Only-Works-If-You-Remember-Exactly" src="https://github.com/user-attachments/assets/ebc15758-9a89-472a-a84f-ad2a92e32436" />
+<img width="2400" height="1350" alt="1_Smart-File-Finder" src="https://github.com/user-attachments/assets/927ea47b-1802-4086-b125-ca124cf5e5a5" />
+<img width="2400" height="1682" alt="6_Measured-Not-Assumed" src="https://github.com/user-attachments/a<img width="2400" height="1350" alt="8_Whats-Next" src="https://github.com/user-attachments/assets/a2e324d4-7791-493e-9999-ad9b2d6e8d3d" />
+<img width="2400" height="1362" alt="7_Built-for-Daily-Use-Not-Just-a-Demo" src="https://github.com/user-attachments/assets/28139ad4-baf0-403e-997d-f3e5b6f816e9" />
+
 
 # Smart File Finder
 
