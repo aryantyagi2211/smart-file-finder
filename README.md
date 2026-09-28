@@ -1,3 +1,7 @@
+<img width="2400" height="1426" alt="2_Search-Only-Works-If-You-Remember-Exactly" src="https://github.com/user-attachments/assets/cc138539-c54d-485b-96d0-6e6475ad1ae0" />
+<img width="2400" heig<img width="2400" height="1350" alt="3_Describe-It-Naturally-Find-It-Instantly-Stay-Private" src="https://github.com/user-attachments/assets/a11c5a30-6def-46c6-a94d-0fd3edd28fd6" />
+ht="1350" alt="1_Smart-File-Finder" src="https://github.com/user-attachments/assets/4b611a40-5abd-4ab3-b675-ea52fc5be2ce" />
+
 # Smart File Finder
 
 A desktop app that finds files by what's actually *inside* them — including
