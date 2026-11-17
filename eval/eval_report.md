@@ -170,6 +170,43 @@ Threshold sweep (top candidate score cutoff):
 | 0.65 | 31% | 0% | 45% | 45% |
 | 0.70 | 31% | 0% | 45% | 45% |
 
+## Applied options thresholds and UI test exception — 2026-11-17
+
+Applied `confidence_threshold = 0.55`, `ambiguity_margin = 0.07`,
+`options_floor = 0.48`, and `max_options = 3`.
+
+### Golden-set comparison
+
+The before run used the prior `ambiguity_margin = 0.05` and
+`options_floor = 0.45`. Counts are across all 20 cases; there are 16 expected
+matches and 4 no-match cases.
+
+| Metric | Before | After |
+|---|---:|---:|
+| Top-1 hit rate | 75% (15/20) | 90% (18/20) |
+| Shown hit rate | 85% (17/20) | 95% (19/20) |
+| No-match queries incorrectly shown as OPTIONS | 3/4 | 1/4 |
+| ONE / OPTIONS / NO_MATCH | 11 / 8 / 1 | 8 / 9 / 3 |
+
+False OPTIONS before: medieval castle query (0.540), Roman coin query
+(0.461), and volcanic ash query (0.471). False OPTIONS after: medieval castle
+query (0.540). The golden run and reports may vary with retrieval scores;
+this comparison records the output from these two runs.
+
+### Windows UI test exception
+
+The exception reproduced in `test_options_card_keyboard_opens_selected_file_and_escape_closes`
+at its `QApplication.processEvents()` after showing the widget:
+`Windows fatal exception: code 0x8001010d`. The test ran the widget using
+Qt's native Windows platform in a non-interactive pytest process. Setting
+`QT_QPA_PLATFORM=offscreen` for this widget test removed the exception while
+retaining its keyboard/open/close assertions. The test did not use an app
+worker thread; the faulthandler also showed tqdm monitor threads, which were
+waiting and not the faulting thread. This points to native Windows Qt event
+pumping in the test environment, not evidence of a worker-thread bug in the
+app. The full interactive desktop app was not launched to verify this on the
+real GUI backend.
+
 ## Options floor and ambiguity margin measurement — 2026-11-17
 
 ### Method
@@ -295,6 +332,53 @@ Threshold sweep (top candidate score cutoff):
 | 0.40 | 88% | 100% | 70% | 80% |
 | 0.45 | 88% | 75% | 75% | 85% |
 | 0.50 | 75% | 25% | 75% | 75% |
+| 0.55 | 75% | 0% | 80% | 80% |
+| 0.60 | 44% | 0% | 55% | 55% |
+| 0.65 | 31% | 0% | 45% | 45% |
+| 0.70 | 31% | 0% | 45% | 45% |
+
+## Evaluation — 2026-11-17T16:39:17+05:30
+
+Hit rate: **90% (18/20)**
+
+Shown hit rate: **95% (19/20)**
+
+OPTIONS cases: **9**
+
+NO_MATCH queries shown as OPTIONS:
+
+- completely unrelated query about medieval castle architecture in france — scores: 0.540, 0.459
+
+| Result | Query | Expected | Returned | Best score | Expected in top 3 | Top-1 hit | Shown hit |
+|---|---|---|---|---:|:---:|:---:|:---:|
+| PASS | adaptive retrieval augmented generation based on question complexity | adaptive rag.pdf | D:/smart-file-finder/smart-file-finder/test_data/Adaptive rag.pdf | 0.703 | True | True | True |
+| PASS | corrective retrieval and confidence checking | corrective rag.pdf | corrective rag.pdf (0.623) | Adaptive rag.pdf (0.561) | 0.623 | True | True | True |
+| PASS | generator discriminator noise vector backpropagation loss | generative_ai_and_gan_notes.pdf | Generative_AI_and_GAN_notes.pdf (0.572) | README (6).md (0.514) | 0.572 | True | True | True |
+| PASS | agentic system design roadmap and pillars | agentic_system_design_roadmap.pdf | D:/smart-file-finder/smart-file-finder/test_data/Agentic_System_Design_Roadmap.pdf | 0.799 | True | True | True |
+| PASS | standard RAG baseline retrieval augmented generation setup | 10 rag architectures (1).pdf | 10 RAG Architectures (1).pdf (0.570) | corrective rag.pdf (0.570) | Adaptive rag.pdf (0.569) | 0.570 | True | True | True |
+| PASS | agenda and safety checklist for the community repair cafe | meeting_notes.txt | D:/smart-file-finder/smart-file-finder/test_data/meeting_notes.txt | 0.711 | True | True | True |
+| PASS | roasted tomato white bean soup ingredients and cooking steps | roasted_vegetable_soup_recipe.txt | D:/smart-file-finder/smart-file-finder/test_data/roasted_vegetable_soup_recipe.txt | 0.712 | True | True | True |
+| PASS | quarterly Lake Alder sample clarity and shoreline observations | lake_alder_water_report.docx | D:/smart-file-finder/smart-file-finder/test_data/lake_alder_water_report.docx | 0.778 | True | True | True |
+| PASS | blue hexagon cloud storage icon with two server drawers | google_cloud_storage_logo.png | D:/smart-file-finder/smart-file-finder/test_data/Google_Cloud_Storage_logo.png | 0.613 | True | True | True |
+| PASS | Gnani APIs speech to text live transcription settings screen | captureit_12-11-2026_at_22-37-18.png | D:/smart-file-finder/smart-file-finder/test_data/captureit_12-11-2026_at_22-37-18.png | 0.568 | True | True | True |
+| PASS | Devengers ChatGPT AI Quizoff poster with twenty three thousand rupee prize pool | watermarked_img_1460134505927967813.png | D:/smart-file-finder/smart-file-finder/test_data/watermarked_img_1460134505927967813.png | 0.574 | True | True | True |
+| FAIL | AI quiz event registration deadline and November twenty first date | watermarked_img_1460134505927967813.png | corrective rag.pdf (0.496) | Adaptive rag.pdf (0.479) | watermarked_img_1460134505927967813.png (0.452) | 0.496 | True | False | True |
+| PASS | find something about planning a trip or an event | coastal_weekend_plan.txt | meeting_notes.txt | watermarked_img_1460134505927967813.png | coastal_weekend_plan.txt (0.499) | fictional_expenses.csv (0.447) | fictional_resume.docx (0.445) | 0.499 | True | True | True |
+| PASS | show me some notes about retrieval or generative AI | 10 rag architectures (1).pdf | adaptive rag.pdf | corrective rag.pdf | generative_ai_and_gan_notes.pdf | Adaptive rag.pdf (0.599) | Generative_AI_and_GAN_notes.pdf (0.539) | corrective rag.pdf (0.515) | 0.599 | True | True | True |
+| PASS | look for information about growing food at home | roasted_vegetable_soup_recipe.txt | urban_gardening_guide.md | urban_gardening_guide.md (0.494) | 10 RAG Architectures (1).pdf (0.417) | roasted_vegetable_soup_recipe.txt (0.408) | 0.494 | True | True | True |
+| PASS | find a guide or study notes for learning a subject | astronomy_study_notes.md | generative_ai_and_gan_notes.pdf | urban_gardening_guide.md | astronomy_study_notes.md (0.542) | Adaptive rag.pdf (0.498) | corrective rag.pdf (0.473) | 0.542 | True | True | True |
+| FAIL | completely unrelated query about medieval castle architecture in france | NO_MATCH | Adaptive rag.pdf (0.540) | corrective rag.pdf (0.459) | 0.540 | N/A | False | False |
+| PASS | guide to cataloging ancient Roman coins and identifying mint marks | NO_MATCH | NO_MATCH (no confident match after retries) | 0.461 | N/A | True | True |
+| PASS | emergency procedures for volcanic ash near commercial aircraft engines | NO_MATCH | NO_MATCH (no confident match after retries) | 0.471 | N/A | True | True |
+| PASS | maintenance log for a deep sea research submarine pressure hull | NO_MATCH | NO_MATCH (no confident match after retries) | 0.444 | N/A | True | True |
+
+Threshold sweep (top candidate score cutoff):
+
+| Threshold | Match hit rate | No-match false-positive rate | Top-1 accuracy | Top-3 accuracy |
+|---:|---:|---:|---:|---:|
+| 0.40 | 94% | 100% | 75% | 80% |
+| 0.45 | 94% | 75% | 80% | 85% |
+| 0.50 | 81% | 25% | 80% | 80% |
 | 0.55 | 75% | 0% | 80% | 80% |
 | 0.60 | 44% | 0% | 55% | 55% |
 | 0.65 | 31% | 0% | 45% | 45% |

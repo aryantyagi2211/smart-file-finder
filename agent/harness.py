@@ -52,8 +52,8 @@ _DEFAULT_LIMITS = {
     "max_reformulations": 2,
     "timeout_seconds": 5,
     "confidence_threshold": 0.55,
-    "ambiguity_margin": 0.05,
-    "options_floor": 0.45,
+    "ambiguity_margin": 0.07,
+    "options_floor": 0.48,
     "max_options": 3,
 }
 
@@ -66,7 +66,7 @@ def load_limits(config_path=None):
 
 
 def decide_candidates(candidates, confidence_threshold=0.55,
-                      ambiguity_margin=0.05, options_floor=0.45,
+                      ambiguity_margin=0.07, options_floor=0.48,
                       max_options=3, confidence_hint=False):
     """Classify grouped file candidates as confident, options, or no-match."""
     ranked = group_candidates_by_file(candidates)

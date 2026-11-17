@@ -13,7 +13,7 @@
 - Image understanding uses `google/gemma-4-E2B-it` (4-bit, indexing time only).
 - `Qwen/Qwen3-1.7B` is used by the indexing-time summarizer only.
 - There is no live LLM reasoning in the search path; query refinement and result decisions are rule-based.
-- Confidence threshold: `0.55`; ambiguity margin: `0.05`; options floor: `0.45`; maximum options: `3`.
+- Confidence threshold: `0.55`; ambiguity margin: `0.07`; options floor: `0.48`; maximum options: `3`.
 
 ## Update round (Nov 2026)
 

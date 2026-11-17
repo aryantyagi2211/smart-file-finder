@@ -22,6 +22,7 @@ Status: **Done** — unit and integration tests, the golden-set evaluation, thre
 - Confident searches return one file without a confirmation popup.
 - Uncertain searches show up to three distinct files with scores, explanations, and Open / Show actions.
 - Queries below the options floor return NO_MATCH.
+- Decision thresholds: confidence `0.55`, ambiguity margin `0.07`, options floor `0.48`, maximum options `3`.
 - `/open` does not automatically open an uncertain result.
 
 ## Open work
@@ -34,4 +35,4 @@ Status: **Done** — unit and integration tests, the golden-set evaluation, thre
 
 ## Current status
 
-Feature 1 is implemented and validated. The full desktop UI was not launched interactively; the pick-list widget and keyboard actions were exercised offscreen.
+Feature 1 is implemented and validated with confidence threshold `0.55`, ambiguity margin `0.07`, options floor `0.48`, and maximum options `3`. The full desktop UI was not launched interactively; the pick-list widget and keyboard actions were exercised offscreen.

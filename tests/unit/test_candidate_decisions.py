@@ -16,8 +16,8 @@ def _limits(tmp_path, max_reformulations=2):
     path = tmp_path / "harness_limits.json"
     path.write_text(
         '{"max_reformulations": %d, "timeout_seconds": 2, '
-        '"confidence_threshold": 0.55, "ambiguity_margin": 0.05, '
-        '"options_floor": 0.45, "max_options": 3}' % max_reformulations,
+        '"confidence_threshold": 0.55, "ambiguity_margin": 0.07, '
+        '"options_floor": 0.48, "max_options": 3}' % max_reformulations,
         encoding="utf-8",
     )
     return str(path)
@@ -130,6 +130,7 @@ def test_options_card_keyboard_opens_selected_file_and_escape_closes(
 ):
     from app.result_card import OptionsResultCard
 
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     app = QApplication.instance() or QApplication([])
     first = tmp_path / "first.txt"
     second = tmp_path / "second.txt"

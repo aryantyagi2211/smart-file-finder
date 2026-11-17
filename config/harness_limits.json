@@ -2,7 +2,7 @@
   "max_reformulations": 2,
   "timeout_seconds": 5,
   "confidence_threshold": 0.55,
-  "ambiguity_margin": 0.05,
-  "options_floor": 0.45,
+  "ambiguity_margin": 0.07,
+  "options_floor": 0.48,
   "max_options": 3
 }
