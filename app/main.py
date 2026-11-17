@@ -11,6 +11,7 @@ so blocking app startup on a full scan is a bad experience).
 
 import sys
 import threading
+import os
 
 if __name__ == "__main__":
     from app.instance_lock import acquire_single_instance_lock
@@ -29,7 +30,7 @@ from app.hotkey_listener import register_hotkey, DEFAULT_HOTKEY
 from app.input_bar import InputBar
 from app.command_parser import parse_command, Command, should_auto_open
 from app.query_handler import handle_query
-from app.result_card import OptionsResultCard, ResultCard
+from app.result_card import OptionsPopupGroup, ResultCard
 from indexing.backfill_index import (
     EXCLUDED_FOLDER_NAMES,
     SUPPORTED_EXTENSIONS,
@@ -120,6 +121,7 @@ class SmartFileFinderApp:
         self.tray_icon.show()
         self.input_bar = InputBar(on_submit=self._on_query_submitted)
         self.result_card = None
+        self.options_group = None
 
         self.hotkey_bridge = HotkeyBridge()
         self.hotkey_bridge.triggered.connect(self._actually_show_input_bar)
@@ -203,8 +205,11 @@ class SmartFileFinderApp:
         result = handle_query(parsed.query)
 
         if result.get("action") == "options":
-            self.result_card = OptionsResultCard(result["options"])
-            self.result_card.show()
+            self.options_group = OptionsPopupGroup(
+                result["options"], anchor=self.input_bar
+            )
+            self.options_group.choice_made.connect(self._on_option_chosen)
+            self.options_group.show()
             return
 
         if not result["found"]:
@@ -230,6 +235,22 @@ class SmartFileFinderApp:
             self.result_card._handle_show()
         else:
             self.result_card.show()
+
+    def _on_option_chosen(self, action, file_path):
+        self.input_bar.hide()
+        target = (
+            Path(file_path).resolve()
+            if action == "open"
+            else Path(file_path).resolve().parent
+        )
+        try:
+            os.startfile(str(target))
+        except Exception as error:
+            QMessageBox.warning(
+                self.input_bar,
+                "Error",
+                f"Could not {action} {target}: {error}",
+            )
 
     def run(self):
         print("Starting Smart File Finder...")

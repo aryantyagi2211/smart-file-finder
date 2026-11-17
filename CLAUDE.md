@@ -3,7 +3,7 @@
 ## Locked decisions
 
 - Confident search results show one file.
-- Not-sure results show a pick list of up to three files.
+- Not-sure results show up to three separate popup cards, with the best-ranked card in the middle when three options are shown.
 - There is no low-confidence confirmation popup.
 - An uncertain result is never opened automatically, including for `/open`.
 

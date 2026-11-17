@@ -15,8 +15,10 @@ import qtawesome as qta
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QMessageBox, QFrame
 )
-from PyQt6.QtGui import QPixmap, QIcon, QKeySequence, QShortcut
-from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QPixmap, QIcon, QKeySequence, QShortcut, QFontMetrics, QCursor
+from PyQt6.QtCore import Qt, QObject, pyqtSignal
+from PyQt6.QtGui import QGuiApplication
+from PyQt6.QtWidgets import QApplication
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
 
@@ -219,135 +221,246 @@ class ResultCard(QWidget):
             QMessageBox.warning(self, "Error", f"Could not open folder: {e}")
 
 
-class OptionsResultCard(QWidget):
-    """Pick list shown when several files are plausible matches."""
+def _elide_explanation(text, font, width, max_lines=2):
+    metrics = QFontMetrics(font)
+    words = str(text).replace("\n", " ").split()
+    lines = []
+    current = ""
+    while words:
+        word = words.pop(0)
+        candidate = f"{current} {word}".strip()
+        if metrics.horizontalAdvance(candidate) <= width:
+            current = candidate
+            continue
+        if current:
+            lines.append(current)
+        current = word
+        if len(lines) == max_lines:
+            break
+    if len(lines) < max_lines and current:
+        lines.append(current)
+    if words and lines:
+        lines[-1] = metrics.elidedText(
+            lines[-1], Qt.TextElideMode.ElideRight, width
+        )
+    return "\n".join(lines[:max_lines])
 
-    def __init__(self, options):
+
+class OptionsPopupCard(QWidget):
+    """One ranked file option in the popup group."""
+
+    def __init__(self, group, rank, option, width):
         super().__init__()
-        self.options = list(options[:3])
-        self._setup_ui()
-        for index in range(len(self.options)):
-            shortcut = QShortcut(QKeySequence(str(index + 1)), self)
-            shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-            shortcut.activated.connect(lambda selected=index: self.open_option(selected))
-        close_shortcut = QShortcut(QKeySequence("Esc"), self)
-        close_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        close_shortcut.activated.connect(self.close)
-
-    def _setup_ui(self):
-        from app_paths import get_resource_path
-
+        self.group = group
+        self.rank = rank
+        self.option = option
+        self.file_path = Path(option["path"]).resolve()
         self.setWindowTitle("Smart File Finder")
-        self.setWindowIcon(QIcon(str(get_resource_path("app_icon.ico"))))
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        width = 660
-        height = 94 + 112 * len(self.options)
-        self.setFixedSize(width, height)
+        self.setFixedSize(width, group.CARD_HEIGHT)
+        self._setup_ui(width)
 
-        container = QWidget(self)
-        container.setGeometry(0, 0, width, height)
-        container.setStyleSheet("""
-            background-color: rgba(18, 19, 24, 248);
-            border-radius: 18px;
-            border: 1px solid rgba(255, 255, 255, 22);
+    def _setup_ui(self, width):
+        from app_paths import get_resource_path
+
+        self.setWindowIcon(QIcon(str(get_resource_path("app_icon.ico"))))
+        self.setStyleSheet("""
+            OptionsPopupCard {
+                background-color: rgba(18, 19, 24, 248);
+                border: 1px solid rgba(255, 255, 255, 22);
+                border-radius: 18px;
+            }
         """)
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(20, 14, 20, 16)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 13, 16, 14)
         layout.setSpacing(8)
 
         header = QHBoxLayout()
-        title = QLabel("Not sure - pick the right file")
-        title.setStyleSheet("color: #f2f2f5; font-size: 15px; font-weight: 700;")
-        header.addWidget(title, stretch=1)
-        close_button = QPushButton()
-        close_button.setIcon(qta.icon("fa5s.times", color="#9a9aa2"))
-        close_button.setFixedSize(26, 26)
-        close_button.clicked.connect(self.close)
-        header.addWidget(close_button)
-        layout.addLayout(header)
-
-        for index, option in enumerate(self.options):
-            self._add_option_row(layout, index, option)
-
-    def _add_option_row(self, parent_layout, index, option):
-        file_path = Path(option["path"]).resolve()
-        score = float(option["score"])
-        frame = QFrame()
-        frame.setStyleSheet("""
-            QFrame {
-                background-color: rgba(255, 255, 255, 7);
-                border: 1px solid rgba(255, 255, 255, 20);
-                border-radius: 10px;
+        badge = QLabel(str(self.rank))
+        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        badge.setFixedSize(26, 26)
+        badge.setStyleSheet("""
+            QLabel {
+                color: #f2f2f5;
+                background-color: rgba(70, 130, 240, 100);
+                border-radius: 13px;
+                font-weight: 700;
             }
         """)
-        row = QHBoxLayout(frame)
-        row.setContentsMargins(10, 8, 10, 8)
-        row.setSpacing(10)
+        header.addWidget(badge)
+        header.addWidget(QLabel("Not sure - pick a file"), stretch=1)
+        self.close_button = QPushButton()
+        self.close_button.setIcon(qta.icon("fa5s.times", color="#9a9aa2"))
+        self.close_button.setFixedSize(24, 24)
+        self.close_button.setStyleSheet("QPushButton { border: none; }")
+        self.close_button.clicked.connect(self.group.close)
+        header.addWidget(self.close_button)
+        layout.addLayout(header)
 
+        details_row = QHBoxLayout()
+        details_row.setSpacing(10)
         thumbnail = QLabel()
-        thumbnail.setFixedSize(54, 54)
+        thumbnail.setFixedSize(48, 48)
         thumbnail.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        if file_path.suffix.lower() in IMAGE_EXTENSIONS:
-            pixmap = QPixmap(str(file_path))
+        if self.file_path.suffix.lower() in IMAGE_EXTENSIONS:
+            pixmap = QPixmap(str(self.file_path))
             if not pixmap.isNull():
                 thumbnail.setPixmap(pixmap.scaled(
-                    54, 54, Qt.AspectRatioMode.KeepAspectRatio,
+                    48, 48, Qt.AspectRatioMode.KeepAspectRatio,
                     Qt.TransformationMode.SmoothTransformation,
                 ))
         if thumbnail.pixmap() is None or thumbnail.pixmap().isNull():
             icon = qta.icon(
-                "fa5s.image" if file_path.suffix.lower() in IMAGE_EXTENSIONS
+                "fa5s.image" if self.file_path.suffix.lower() in IMAGE_EXTENSIONS
                 else "fa5s.file-alt",
                 color="#8fb3ff",
             )
-            thumbnail.setPixmap(icon.pixmap(26, 26))
-        row.addWidget(thumbnail)
+            thumbnail.setPixmap(icon.pixmap(28, 28))
+        details_row.addWidget(thumbnail)
 
         details = QVBoxLayout()
-        filename = QLabel(f"{index + 1}. {file_path.name}")
-        filename.setStyleSheet("color: #f2f2f5; font-size: 13px; font-weight: 700;")
+        details.setSpacing(3)
+        filename = QLabel()
+        filename.setToolTip(self.file_path.name)
+        filename.setStyleSheet(
+            "color: #f2f2f5; font-size: 13px; font-weight: 700;"
+        )
+        name_width = max(40, width - 112)
+        filename.setFixedWidth(name_width)
+        filename.setText(QFontMetrics(filename.font()).elidedText(
+            self.file_path.name, Qt.TextElideMode.ElideMiddle, name_width
+        ))
         details.addWidget(filename)
-        score_label = QLabel(f"{score:.0%} match")
-        score_label.setStyleSheet("color: #8fb3ff; font-size: 11px;")
-        details.addWidget(score_label)
-        explanation = QLabel(
+        score = QLabel(f"{float(self.option['score']):.0%} match")
+        score.setStyleSheet("color: #8fb3ff; font-size: 11px;")
+        details.addWidget(score)
+        details_row.addLayout(details, stretch=1)
+        layout.addLayout(details_row)
+
+        explanation_width = width - 32
+        explanation = QLabel(_elide_explanation(
             _strip_confidence_from_explanation(
-                option.get("explanation", "")
-            ).replace("\n", " ")
-        )
+                self.option.get("explanation", "")
+            ),
+            self.font(),
+            explanation_width,
+        ))
+        explanation.setToolTip(self.option.get("explanation", ""))
         explanation.setStyleSheet("color: #aaaab2; font-size: 11px;")
-        explanation.setMaximumHeight(18)
-        details.addWidget(explanation)
-        row.addLayout(details, stretch=1)
+        explanation.setFixedHeight(32)
+        layout.addWidget(explanation)
 
-        open_button = QPushButton("Open")
-        open_button.setStyleSheet(SECONDARY_BUTTON_STYLE)
-        open_button.clicked.connect(
-            lambda checked=False, selected=index: self.open_option(selected)
+        folder = QLabel(f"…\\{self.file_path.parent.name}")
+        folder.setToolTip(str(self.file_path.parent))
+        folder.setStyleSheet("color: #85858e; font-size: 10px;")
+        layout.addWidget(folder)
+
+        buttons = QHBoxLayout()
+        buttons.setSpacing(8)
+        self.open_button = QPushButton("Open")
+        self.open_button.setStyleSheet(SECONDARY_BUTTON_STYLE)
+        self.open_button.setFixedHeight(36)
+        self.open_button.clicked.connect(
+            lambda checked=False: self.group.choose(self.rank, "open")
         )
-        show_button = QPushButton("Show")
-        show_button.setStyleSheet(PRIMARY_BUTTON_STYLE)
-        show_button.clicked.connect(
-            lambda checked=False, selected=index: self.show_option(selected)
+        self.show_button = QPushButton("Show")
+        self.show_button.setStyleSheet(PRIMARY_BUTTON_STYLE)
+        self.show_button.setFixedHeight(36)
+        self.show_button.clicked.connect(
+            lambda checked=False: self.group.choose(self.rank, "show")
         )
-        row.addWidget(open_button)
-        row.addWidget(show_button)
-        parent_layout.addWidget(frame)
+        buttons.addWidget(self.open_button)
+        buttons.addWidget(self.show_button)
+        layout.addLayout(buttons)
 
-    def open_option(self, index):
-        try:
-            os.startfile(str(Path(self.options[index]["path"]).resolve()))
-        except Exception as error:
-            QMessageBox.warning(self, "Error", f"Could not open file: {error}")
 
-    def show_option(self, index):
-        try:
-            folder = Path(self.options[index]["path"]).resolve().parent
-            os.startfile(str(folder))
-        except Exception as error:
-            QMessageBox.warning(self, "Error", f"Could not open folder: {error}")
+class OptionsPopupGroup(QObject):
+    """Creates and manages a coordinated set of ranked option cards."""
+
+    choice_made = pyqtSignal(str, str)
+    CARD_WIDTH = 340
+    CARD_HEIGHT = 260
+    GAP = 16
+
+    def __init__(self, options, anchor=None):
+        super().__init__()
+        self.options = list(options[:3])
+        self.anchor = anchor
+        self.cards = []
+        self._options_by_rank = {
+            rank: option for rank, option in enumerate(self.options, 1)
+        }
+        screen = self._target_screen()
+        geometry = screen.availableGeometry()
+        count = len(self.options)
+        gap = self.GAP if count > 1 else 0
+        width = min(
+            self.CARD_WIDTH,
+            max(1, (geometry.width() - gap * (count - 1)) // count),
+        )
+
+        visual_options = (
+            [(2, self.options[1]), (1, self.options[0]), (3, self.options[2])]
+            if count == 3 else list(enumerate(self.options, 1))
+        )
+        for rank, option in visual_options:
+            self.cards.append(OptionsPopupCard(self, rank, option, width))
+
+        self._position_cards(screen, width, gap)
+        if self.cards:
+            for key, action in (("1", "open"), ("2", "open"), ("3", "open")):
+                shortcut = QShortcut(QKeySequence(key), self.cards[0])
+                shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+                shortcut.activated.connect(
+                    lambda selected=key: self.choose(int(selected), "open")
+                )
+            escape = QShortcut(QKeySequence("Esc"), self.cards[0])
+            escape.setContext(Qt.ShortcutContext.ApplicationShortcut)
+            escape.activated.connect(self.close)
+
+    def _target_screen(self):
+        if self.anchor is not None:
+            screen = self.anchor.screen()
+            if screen is not None:
+                return screen
+        screen = QGuiApplication.screenAt(QCursor.pos())
+        return screen or QApplication.primaryScreen()
+
+    def _position_cards(self, screen, width, gap):
+        geometry = screen.availableGeometry()
+        count = len(self.cards)
+        total_width = count * width + max(0, count - 1) * gap
+        left = geometry.x() + (geometry.width() - total_width) // 2
+        if self.anchor is not None:
+            anchor_top = self.anchor.mapToGlobal(self.anchor.rect().topLeft()).y()
+            top = anchor_top - self.CARD_HEIGHT - 16
+        else:
+            top = geometry.y() + (geometry.height() - self.CARD_HEIGHT) // 2
+        top = max(geometry.y(), min(top, geometry.bottom() - self.CARD_HEIGHT + 1))
+        for index, card in enumerate(self.cards):
+            card.move(left + index * (width + gap), top)
+
+    def show(self):
+        for card in self.cards:
+            card.show()
+        if self.cards:
+            self.cards[0].raise_()
+            self.cards[0].activateWindow()
+
+    def choose(self, rank, action):
+        option = self._options_by_rank.get(rank)
+        if option is None:
+            return
+        path = str(Path(option["path"]).resolve())
+        self.close()
+        self.choice_made.emit(action, path)
+
+    def close(self):
+        for card in self.cards:
+            card.close()

@@ -4,7 +4,7 @@ from app_paths import normalize_path
 
 
 def group_candidates_by_file(candidates):
-    """Keep the highest-scoring candidate for each normalized source path."""
+    """Keep the highest-scoring candidate for each resolved source path."""
     best_by_file = {}
     for candidate in candidates:
         path = getattr(candidate, "path", None)

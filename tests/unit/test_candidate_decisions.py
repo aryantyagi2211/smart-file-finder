@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 from agent.candidate_utils import group_candidates_by_file
@@ -34,6 +35,20 @@ def test_group_candidates_by_file_keeps_each_file_once_with_best_score():
     assert grouped[0].path == r"C:\docs\ONE.txt"
     assert grouped[0].score == 0.72
     assert grouped[1].path == r"C:\docs\two.txt"
+
+
+def test_same_filename_in_different_folders_is_kept_as_two_files():
+    grouped = group_candidates_by_file([
+        _candidate(r"C:\Users\me\Downloads\captureit.png", 0.49),
+        _candidate(r"D:\project\test_data\captureit.png", 0.43),
+    ])
+
+    assert len(grouped) == 2
+    assert {candidate.score for candidate in grouped} == {0.49, 0.43}
+    assert {candidate.path for candidate in grouped} == {
+        r"C:\Users\me\Downloads\captureit.png",
+        r"D:\project\test_data\captureit.png",
+    }
 
 
 def test_decision_is_confident_when_threshold_and_margin_pass():
@@ -125,31 +140,158 @@ def test_open_command_does_not_auto_open_options():
     assert should_auto_open(Command.FIND, "answer") is False
 
 
-def test_options_card_keyboard_opens_selected_file_and_escape_closes(
-    tmp_path, monkeypatch
-):
-    from app.result_card import OptionsResultCard
+def _popup_group(tmp_path, count=3):
+    from app.result_card import OptionsPopupGroup
 
+    from PyQt6.QtWidgets import QWidget
+    anchor = QWidget()
+    anchor.setGeometry(100, 450, 520, 84)
+    anchor.show()
+    options = []
+    for rank in range(count):
+        path = tmp_path / f"option-{rank + 1}.txt"
+        path.write_text(f"option {rank + 1}", encoding="utf-8")
+        options.append({
+            "path": str(path),
+            "score": 0.7 - rank * 0.05,
+            "explanation": f"Explanation for option {rank + 1}",
+        })
+    return OptionsPopupGroup(options, anchor=anchor), anchor
+
+
+def _qt_app(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
-    app = QApplication.instance() or QApplication([])
-    first = tmp_path / "first.txt"
-    second = tmp_path / "second.txt"
-    first.write_text("first", encoding="utf-8")
-    second.write_text("second", encoding="utf-8")
+    return QApplication.instance() or QApplication([])
+
+
+def test_three_popup_cards_are_ranked_and_fit_screen(tmp_path, monkeypatch):
+    app = _qt_app(monkeypatch)
+    group, anchor = _popup_group(tmp_path)
+    group.show()
+    app.processEvents()
+
+    assert len(group.cards) == 3
+    by_rank = {card.rank: card for card in group.cards}
+    assert by_rank[2].x() < by_rank[1].x() < by_rank[3].x()
+    screen = anchor.screen().availableGeometry()
+    for card in group.cards:
+        rect = card.frameGeometry()
+        assert screen.left() <= rect.left()
+        assert screen.top() <= rect.top()
+        assert rect.right() <= screen.right()
+        assert rect.bottom() <= screen.bottom()
+    group.close()
+    anchor.close()
+
+
+def test_two_popup_cards_put_best_on_left(tmp_path, monkeypatch):
+    app = _qt_app(monkeypatch)
+    group, anchor = _popup_group(tmp_path, count=2)
+    group.show()
+    app.processEvents()
+
+    by_rank = {card.rank: card for card in group.cards}
+    assert len(group.cards) == 2
+    assert by_rank[1].x() < by_rank[2].x()
+    screen = anchor.screen().availableGeometry()
+    for card in group.cards:
+        rect = card.frameGeometry()
+        assert screen.left() <= rect.left()
+        assert rect.right() <= screen.right()
+    group.close()
+    anchor.close()
+
+
+def test_open_choice_closes_group_and_emits_once(tmp_path, monkeypatch):
+    app = _qt_app(monkeypatch)
+    group, anchor = _popup_group(tmp_path)
     opened = []
-    monkeypatch.setattr("app.result_card.os.startfile", opened.append, raising=False)
-
-    card = OptionsResultCard([
-        {"path": str(first), "score": 0.6, "explanation": "First explanation"},
-        {"path": str(second), "score": 0.55, "explanation": "Second explanation"},
-    ])
-    card.show()
+    group.choice_made.connect(
+        lambda action, path: opened.append((action, path, all(
+            not card.isVisible() for card in group.cards
+        )))
+    )
+    group.show()
     app.processEvents()
 
-    QTest.keyClick(card, Qt.Key.Key_2)
-    assert opened == [str(second.resolve())]
+    rank_two = next(card for card in group.cards if card.rank == 2)
+    rank_two.open_button.click()
 
-    QTest.keyClick(card, Qt.Key.Key_Escape)
-    assert not card.isVisible()
-    card.deleteLater()
+    assert opened == [("open", str(Path(tmp_path / "option-2.txt").resolve()), True)]
+    group.close()
+    anchor.close()
+
+
+def test_number_keys_open_matching_rank_not_screen_position(tmp_path, monkeypatch):
+    app = _qt_app(monkeypatch)
+    for key in (Qt.Key.Key_1, Qt.Key.Key_2, Qt.Key.Key_3):
+        group, anchor = _popup_group(tmp_path)
+        choices = []
+        group.choice_made.connect(
+            lambda action, path: choices.append((action, Path(path).name))
+        )
+        group.show()
+        app.processEvents()
+
+        QTest.keyClick(group.cards[0], key)
+        app.processEvents()
+        rank = key.value - Qt.Key.Key_0.value
+        assert choices == [("open", f"option-{rank}.txt")]
+        assert all(not card.isVisible() for card in group.cards)
+        group.close()
+        anchor.close()
+
+
+def test_escape_closes_all_popup_cards(tmp_path, monkeypatch):
+    app = _qt_app(monkeypatch)
+    group, anchor = _popup_group(tmp_path)
+    group.show()
     app.processEvents()
+
+    QTest.keyClick(group.cards[0], Qt.Key.Key_Escape)
+    app.processEvents()
+
+    assert all(not card.isVisible() for card in group.cards)
+    anchor.close()
+
+
+def test_close_button_closes_all_popup_cards(tmp_path, monkeypatch):
+    app = _qt_app(monkeypatch)
+    group, anchor = _popup_group(tmp_path)
+    group.show()
+    app.processEvents()
+
+    group.cards[-1].close_button.click()
+    app.processEvents()
+
+    assert all(not card.isVisible() for card in group.cards)
+    anchor.close()
+
+
+def test_focus_loss_does_not_close_popup_group(tmp_path, monkeypatch):
+    app = _qt_app(monkeypatch)
+    group, anchor = _popup_group(tmp_path)
+    group.show()
+    app.processEvents()
+
+    group.cards[0].clearFocus()
+    app.processEvents()
+
+    assert all(card.isVisible() for card in group.cards)
+    group.close()
+    anchor.close()
+
+
+def test_popup_card_labels_have_no_outlined_boxes(tmp_path, monkeypatch):
+    from PyQt6.QtWidgets import QLabel
+
+    app = _qt_app(monkeypatch)
+    group, anchor = _popup_group(tmp_path)
+    group.show()
+    app.processEvents()
+
+    for card in group.cards:
+        for label in card.findChildren(QLabel):
+            assert "border:" not in label.styleSheet().casefold()
+    group.close()
+    anchor.close()
