@@ -6,6 +6,7 @@ vectors, running on CPU. This is the Phase 2 starter model per CLAUDE.md —
 gets swapped for the QNN-converted embedding model in Phase 3.
 """
 import os
+import threading
 from pathlib import Path
 
 HF_HOME = os.environ.setdefault(
@@ -16,6 +17,7 @@ os.environ.setdefault("HF_HUB_CACHE", str(Path(HF_HOME) / "hub"))
 from sentence_transformers import SentenceTransformer
 
 _model = None  # loaded lazily, once, on first use
+_model_lock = threading.Lock()
 
 
 def get_model():
@@ -30,8 +32,15 @@ def get_model():
     """
     global _model
     if _model is None:
-        _model = SentenceTransformer("all-mpnet-base-v2")
+        with _model_lock:
+            if _model is None:
+                _model = SentenceTransformer("all-mpnet-base-v2")
     return _model
+
+
+def preload_model():
+    """Load the embedding model before the first interactive query."""
+    return get_model()
 
 
 def embed_text(text):

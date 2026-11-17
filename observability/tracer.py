@@ -45,11 +45,22 @@ def record_attempt(trace, query_used, candidates, confident, best_score, reformu
     })
 
 
-def finalize_trace(trace, action, result_path=None, explanation=None):
+def record_failure(trace, query_used, stage, reason):
+    """Record a timed-out or failed harness step as a trace attempt."""
+    trace["attempts"].append({
+        "query_used": query_used,
+        "stage": stage,
+        "outcome": reason,
+        "confident": False,
+    })
+
+
+def finalize_trace(trace, action, result_path=None, explanation=None, reason=None):
     """Mark the trace as complete with its final outcome."""
     trace["final_action"] = action
     trace["final_result"] = result_path
     trace["explanation"] = explanation
+    trace["reason"] = reason
     trace["ended_at"] = datetime.now().isoformat(timespec="seconds")
 
 

@@ -13,7 +13,13 @@ from agent.corrective import check_results
 from agent.reasoner import pick_best
 from agent.explainer import explain
 from observability.logger import log
-from observability.tracer import start_trace, record_attempt, finalize_trace, write_trace
+from observability.tracer import (
+    start_trace,
+    record_attempt,
+    record_failure,
+    finalize_trace,
+    write_trace,
+)
 
 
 def handle_query(query_text):
@@ -54,7 +60,18 @@ def handle_query(query_text):
             "explanation": outcome["explanation"]
         }
     else:
-        finalize_trace(trace, action="no_match")
+        if outcome["reason"] in {"timeout", "error"}:
+            record_failure(
+                trace,
+                query_text,
+                outcome.get("stage", "query_step"),
+                outcome["reason"],
+            )
+        finalize_trace(trace, action="no_match", reason=outcome["reason"])
         write_trace(trace)
         log(f"Query returned NO_MATCH: {outcome['reason']}")
-        return {"found": False, "reason": outcome["reason"]}
+        return {
+            "found": False,
+            "reason": outcome["reason"],
+            "message": outcome.get("message"),
+        }

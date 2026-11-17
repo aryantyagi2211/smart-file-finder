@@ -16,9 +16,20 @@ Real implementations get wired in as they're built:
 """
 
 from enum import Enum
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 import time
 import json
 from app_paths import get_config_path
+from observability.logger import log
+
+
+_STEP_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="query-step")
+
+
+class StepDeadlineExceeded(Exception):
+    def __init__(self, step_name):
+        super().__init__(step_name)
+        self.step_name = step_name
 
 
 class AgentAction(Enum):
@@ -35,29 +46,85 @@ def load_limits(config_path=None):
         return json.load(f)
 
 
+def _run_step(step_name, function, args, deadline):
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise StepDeadlineExceeded(step_name)
+
+    future = _STEP_EXECUTOR.submit(function, *args)
+    try:
+        return future.result(timeout=remaining)
+    except FutureTimeoutError:
+        if future.done():
+            return future.result()
+        future.cancel()
+        raise StepDeadlineExceeded(step_name)
+
+
+def _failure(reason, stage):
+    if reason == "timeout":
+        message = "Nothing found in time; try rephrasing your search."
+    else:
+        message = "Search failed unexpectedly; please try again."
+    return {
+        "action": AgentAction.NO_MATCH,
+        "reason": reason,
+        "stage": stage,
+        "message": message,
+    }
+
+
 def run_query(query, retriever, corrective_check, reasoner, explainer,
               config_path=None):
-    limits = load_limits(config_path)
+    start = time.monotonic()
+    try:
+        limits = load_limits(config_path)
+    except Exception as error:
+        log(f"Query failed while loading limits: {error}")
+        return _failure("error", "load_limits")
+
     max_reformulations = limits["max_reformulations"]
     timeout_seconds = limits["timeout_seconds"]
 
-    start = time.time()
+    deadline = start + timeout_seconds
     attempts = 0
     current_query = query
 
     while attempts <= max_reformulations:
-        if time.time() - start > timeout_seconds:
-            return {"action": AgentAction.NO_MATCH, "reason": "timeout"}
+        try:
+            stage = "retriever"
+            candidates = _run_step(
+                "retriever", retriever, (current_query,), deadline
+            )
+            stage = "corrective_check"
+            check = _run_step(
+                "corrective_check",
+                corrective_check,
+                (candidates, current_query),
+                deadline,
+            )
 
-        candidates = retriever(current_query)
-        check = corrective_check(candidates, current_query)
+            if check.confident:
+                stage = "reasoner"
+                best = _run_step(
+                    "reasoner", reasoner, (candidates, current_query), deadline
+                )
+                stage = "explainer"
+                explanation = _run_step(
+                    "explainer", explainer, (best, current_query), deadline
+                )
+                return {
+                    "action": AgentAction.ANSWER,
+                    "result": best,
+                    "explanation": explanation,
+                }
 
-        if check.confident:
-            best = reasoner(candidates, current_query)
-            explanation = explainer(best, current_query)
-            return {"action": AgentAction.ANSWER, "result": best, "explanation": explanation}
-        else:
             current_query = check.reformulated_query
             attempts += 1
+        except StepDeadlineExceeded as error:
+            return _failure("timeout", error.step_name)
+        except Exception as error:
+            log(f"Query failed during {stage}: {error}")
+            return _failure("error", stage)
 
     return {"action": AgentAction.NO_MATCH, "reason": "no confident match after retries"}

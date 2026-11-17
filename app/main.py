@@ -46,6 +46,8 @@ from PyQt6.QtWidgets import QSystemTrayIcon, QMenu
 from PyQt6.QtGui import QIcon
 
 from app.indexing_status import IndexingStatusWidget
+from indexing.embedder import preload_model
+from observability.logger import log
 
 import time
 print(f"[TIMING] Script started at {time.time()}")
@@ -132,9 +134,22 @@ class SmartFileFinderApp:
         self.progress_bridge.progress_updated.connect(self.status_window.show_progress)
         self.progress_bridge.error_occurred.connect(self.status_window.show_error)
         self.progress_bridge.model_loading.connect(self.status_window.show_loading_model)
-        
+
+        self._embedding_warmup_thread = threading.Thread(
+            target=self._preload_embedding_model,
+            daemon=True,
+        )
+        self._embedding_warmup_thread.start()
+
         self._indexing_thread = threading.Thread(target=self._run_initial_backfill, daemon=True)
         self._indexing_thread.start()
+
+    @staticmethod
+    def _preload_embedding_model():
+        try:
+            preload_model()
+        except Exception as error:
+            log(f"Embedding model preload failed; it will retry on use: {error}")
 
     def _run_initial_backfill(self):
         print("Indexing files, please wait...")
@@ -188,7 +203,10 @@ class SmartFileFinderApp:
             QMessageBox.information(
                 self.input_bar,
                 "No match found",
-                f"No confident match found. ({result['reason']})"
+                result.get(
+                    "message",
+                    f"No confident match found. ({result['reason']})",
+                )
             )
             return
 
