@@ -1,26 +1,98 @@
 [
   {
     "query": "adaptive retrieval augmented generation based on question complexity",
-    "expected_file": "test_data\\Adaptive rag.pdf"
+    "expected_file": "Adaptive rag.pdf"
   },
   {
     "query": "corrective retrieval and confidence checking",
-    "expected_file": "test_data\\corrective rag.pdf"
+    "expected_file": "corrective rag.pdf"
   },
   {
     "query": "generator discriminator noise vector backpropagation loss",
-    "expected_file": "test_data\\Generative_AI_and_GAN_notes.pdf"
+    "expected_file": "Generative_AI_and_GAN_notes.pdf"
   },
   {
     "query": "agentic system design roadmap and pillars",
-    "expected_file": "test_data\\Agentic_System_Design_Roadmap.pdf"
+    "expected_file": "Agentic_System_Design_Roadmap.pdf"
   },
   {
     "query": "standard RAG baseline retrieval augmented generation setup",
-    "expected_file": "test_data\\10 RAG Architectures (1).pdf"
+    "expected_file": "10 RAG Architectures (1).pdf"
+  },
+  {
+    "query": "agenda and safety checklist for the community repair cafe",
+    "expected_file": "meeting_notes.txt"
+  },
+  {
+    "query": "roasted tomato white bean soup ingredients and cooking steps",
+    "expected_file": "roasted_vegetable_soup_recipe.txt"
+  },
+  {
+    "query": "quarterly Lake Alder sample clarity and shoreline observations",
+    "expected_file": "lake_alder_water_report.docx"
+  },
+  {
+    "query": "blue hexagon cloud storage icon with two server drawers",
+    "expected_file": "Google_Cloud_Storage_logo.png"
+  },
+  {
+    "query": "Gnani APIs speech to text live transcription settings screen",
+    "expected_file": "captureit_12-11-2026_at_22-37-18.png"
+  },
+  {
+    "query": "Devengers ChatGPT AI Quizoff poster with twenty three thousand rupee prize pool",
+    "expected_file": "watermarked_img_1460134505927967813.png"
+  },
+  {
+    "query": "AI quiz event registration deadline and November twenty first date",
+    "expected_file": "watermarked_img_1460134505927967813.png"
+  },
+  {
+    "query": "find something about planning a trip or an event",
+    "acceptable_files": [
+      "coastal_weekend_plan.txt",
+      "meeting_notes.txt",
+      "watermarked_img_1460134505927967813.png"
+    ]
+  },
+  {
+    "query": "show me some notes about retrieval or generative AI",
+    "acceptable_files": [
+      "Adaptive rag.pdf",
+      "corrective rag.pdf",
+      "10 RAG Architectures (1).pdf",
+      "Generative_AI_and_GAN_notes.pdf"
+    ]
+  },
+  {
+    "query": "look for information about growing food at home",
+    "acceptable_files": [
+      "urban_gardening_guide.md",
+      "roasted_vegetable_soup_recipe.txt"
+    ]
+  },
+  {
+    "query": "find a guide or study notes for learning a subject",
+    "acceptable_files": [
+      "urban_gardening_guide.md",
+      "astronomy_study_notes.md",
+      "Generative_AI_and_GAN_notes.pdf"
+    ]
   },
   {
     "query": "completely unrelated query about medieval castle architecture in france",
+    "expected_file": null
+  },
+  {
+    "query": "guide to cataloging ancient Roman coins and identifying mint marks",
+    "expected_file": null
+  },
+  {
+    "query": "emergency procedures for volcanic ash near commercial aircraft engines",
+    "expected_file": null
+  },
+  {
+    "query": "maintenance log for a deep sea research submarine pressure hull",
     "expected_file": null
   }
 ]

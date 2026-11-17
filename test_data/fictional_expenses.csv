@@ -1,0 +1,19 @@
+date,category,description,amount,currency,payment_method
+2026-10-01,office,sample printer paper,18.40,USD,card
+2026-10-02,travel,fictional rail ticket,42.00,USD,card
+2026-10-03,meals,team lunch example,67.25,USD,card
+2026-10-04,supplies,marker pens sample,9.80,USD,cash
+2026-10-05,software,monthly design tool demo,24.00,USD,card
+2026-10-06,travel,local bus passes example,16.50,USD,card
+2026-10-07,office,notebooks for workshop,13.20,USD,cash
+2026-10-08,shipping,poster tube sample,7.95,USD,card
+2026-10-09,meals,coffee meeting example,21.60,USD,card
+2026-10-10,supplies,packing tape demo,6.75,USD,cash
+2026-10-11,travel,training shuttle example,28.00,USD,card
+2026-10-12,software,backup storage demo,11.99,USD,card
+2026-10-13,office,desk lamp sample,31.50,USD,card
+2026-10-14,meals,volunteer snacks example,19.35,USD,cash
+2026-10-15,shipping,return label sample,5.40,USD,card
+2026-10-16,supplies,gloves for repair cafe,14.25,USD,card
+2026-10-17,travel,parking meter example,8.00,USD,cash
+2026-10-18,office,folder labels sample,4.90,USD,cash
