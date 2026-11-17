@@ -170,6 +170,87 @@ Threshold sweep (top candidate score cutoff):
 | 0.65 | 31% | 0% | 45% | 45% |
 | 0.70 | 31% | 0% | 45% | 45% |
 
+## Options floor and ambiguity margin measurement — 2026-11-17
+
+### Method
+
+Ran the 20-case golden set once through the real pipeline. For each case, scores below are the highest observed score per normalized file path across that run's retrieval attempts, sorted descending and capped at five files. The parameter grid below reuses this fixed capture; it does not rerun retrieval or simulate newly generated reformulations. Case types: 8 clear, 4 image, 4 ambiguous, and 4 no-match. Simulations hold confidence threshold at 0.55 and maximum options at 3.
+
+### Captured per-case scores
+
+| # | Type | Query | Expected / acceptable files | Ranked files (score) |
+|---:|---|---|---|---|
+| 1 | Clear | adaptive retrieval augmented generation based on question complexity | Adaptive rag.pdf | Adaptive rag.pdf 0.703; corrective rag.pdf 0.620 |
+| 2 | Clear | corrective retrieval and confidence checking | corrective rag.pdf | corrective rag.pdf 0.623; Adaptive rag.pdf 0.561 |
+| 3 | Clear | generator discriminator noise vector backpropagation loss | Generative_AI_and_GAN_notes.pdf | Generative_AI_and_GAN_notes.pdf 0.572; README (6).md 0.514 |
+| 4 | Clear | agentic system design roadmap and pillars | Agentic_System_Design_Roadmap.pdf | Agentic_System_Design_Roadmap.pdf 0.799 |
+| 5 | Clear | standard RAG baseline retrieval augmented generation setup | 10 RAG Architectures (1).pdf | 10 RAG Architectures (1).pdf 0.570; corrective rag.pdf 0.570; Adaptive rag.pdf 0.569 |
+| 6 | Clear | agenda and safety checklist for the community repair cafe | meeting_notes.txt | meeting_notes.txt 0.711; fictional_resume.docx 0.462; lake_alder_water_report.docx 0.456; Agentic_System_Design_Roadmap.pdf 0.432; 10 RAG Architectures (1).pdf 0.426 |
+| 7 | Clear | roasted tomato white bean soup ingredients and cooking steps | roasted_vegetable_soup_recipe.txt | roasted_vegetable_soup_recipe.txt 0.712; urban_gardening_guide.md 0.405; meeting_notes.txt 0.404; Adaptive rag.pdf 0.391; corrective rag.pdf 0.391 |
+| 8 | Clear | quarterly Lake Alder sample clarity and shoreline observations | lake_alder_water_report.docx | lake_alder_water_report.docx 0.778; coastal_weekend_plan.txt 0.418; corrective rag.pdf 0.414 |
+| 9 | Image | blue hexagon cloud storage icon with two server drawers | Google_Cloud_Storage_logo.png | Google_Cloud_Storage_logo.png 0.613; watermarked_img_1460134505927967813.png 0.428; fictional_expenses.csv 0.404; Adaptive rag.pdf 0.398; captureit_12-11-2026_at_22-37-18.png 0.385 |
+| 10 | Image | Gnani APIs speech to text live transcription settings screen | captureit_12-11-2026_at_22-37-18.png | captureit_12-11-2026_at_22-37-18.png 0.568; Generative_AI_and_GAN_notes.pdf 0.452; corrective rag.pdf 0.418; Adaptive rag.pdf 0.409 |
+| 11 | Image | Devengers ChatGPT AI Quizoff poster with twenty three thousand rupee prize pool | watermarked_img_1460134505927967813.png | watermarked_img_1460134505927967813.png 0.574; fictional_expenses.csv 0.491; corrective rag.pdf 0.458; Adaptive rag.pdf 0.458; Generative_AI_and_GAN_notes.pdf 0.451 |
+| 12 | Image | AI quiz event registration deadline and November twenty first date | watermarked_img_1460134505927967813.png | corrective rag.pdf 0.496; Adaptive rag.pdf 0.479; watermarked_img_1460134505927967813.png 0.452; captureit_12-11-2026_at_22-37-18.png 0.441; fictional_expenses.csv 0.428 |
+| 13 | Ambiguous | find something about planning a trip or an event | coastal_weekend_plan.txt; meeting_notes.txt; watermarked_img_1460134505927967813.png | coastal_weekend_plan.txt 0.499; fictional_expenses.csv 0.447; fictional_resume.docx 0.445; meeting_notes.txt 0.441; fictional_contacts.csv 0.426 |
+| 14 | Ambiguous | show me some notes about retrieval or generative AI | Adaptive rag.pdf; corrective rag.pdf; 10 RAG Architectures (1).pdf; Generative_AI_and_GAN_notes.pdf | Adaptive rag.pdf 0.599; Generative_AI_and_GAN_notes.pdf 0.539; corrective rag.pdf 0.515; README (6).md 0.493 |
+| 15 | Ambiguous | look for information about growing food at home | urban_gardening_guide.md; roasted_vegetable_soup_recipe.txt | urban_gardening_guide.md 0.494; 10 RAG Architectures (1).pdf 0.417; roasted_vegetable_soup_recipe.txt 0.408; coastal_weekend_plan.txt 0.389; fictional_resume.docx 0.387 |
+| 16 | Ambiguous | find a guide or study notes for learning a subject | urban_gardening_guide.md; astronomy_study_notes.md; Generative_AI_and_GAN_notes.pdf | corrective rag.pdf 0.452; astronomy_study_notes.md 0.449; Adaptive rag.pdf 0.443; 10 RAG Architectures (1).pdf 0.414 |
+| 17 | No-match | completely unrelated query about medieval castle architecture in france | NO_MATCH | Adaptive rag.pdf 0.540; corrective rag.pdf 0.459; urban_gardening_guide.md 0.403; fictional_resume.docx 0.397; coastal_weekend_plan.txt 0.397 |
+| 18 | No-match | guide to cataloging ancient Roman coins and identifying mint marks | NO_MATCH | corrective rag.pdf 0.461; Adaptive rag.pdf 0.454; urban_gardening_guide.md 0.451; fictional_resume.docx 0.444; fictional_expenses.csv 0.413 |
+| 19 | No-match | emergency procedures for volcanic ash near commercial aircraft engines | NO_MATCH | meeting_notes.txt 0.471; lake_alder_water_report.docx 0.452; Agentic_System_Design_Roadmap.pdf 0.442; Adaptive rag.pdf 0.428; 10 RAG Architectures (1).pdf 0.414 |
+| 20 | No-match | maintenance log for a deep sea research submarine pressure hull | NO_MATCH | lake_alder_water_report.docx 0.444; Agentic_System_Design_Roadmap.pdf 0.440; meeting_notes.txt 0.437; coastal_weekend_plan.txt 0.418; fictional_expenses.csv 0.407 |
+
+### Fixed-score simulation grid
+
+Top-1 and shown hit rates are over the 16 match-expected cases. No-match false positives count options or answers among four no-match cases. “One” counts ANSWER decisions; wrong ANSWER counts any single-file answer not in that case's expected set (all no-match answers would count wrong).
+
+| options_floor | ambiguity_margin | Top-1 match | Shown match | No-match false positives | One | OPTIONS | NO_MATCH | Wrong ANSWER |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0.40 | 0.02 | 87.5% (14/16) | 100.0% (16/16) | 4/4 | 11 | 9 | 0 | 0 |
+| 0.40 | 0.03 | 87.5% (14/16) | 100.0% (16/16) | 4/4 | 11 | 9 | 0 | 0 |
+| 0.40 | 0.05 | 87.5% (14/16) | 100.0% (16/16) | 4/4 | 11 | 9 | 0 | 0 |
+| 0.40 | 0.07 | 87.5% (14/16) | 100.0% (16/16) | 4/4 | 8 | 12 | 0 | 0 |
+| 0.40 | 0.10 | 87.5% (14/16) | 100.0% (16/16) | 4/4 | 6 | 14 | 0 | 0 |
+| 0.42 | 0.02 | 87.5% (14/16) | 100.0% (16/16) | 4/4 | 11 | 9 | 0 | 0 |
+| 0.42 | 0.03 | 87.5% (14/16) | 100.0% (16/16) | 4/4 | 11 | 9 | 0 | 0 |
+| 0.42 | 0.05 | 87.5% (14/16) | 100.0% (16/16) | 4/4 | 11 | 9 | 0 | 0 |
+| 0.42 | 0.07 | 87.5% (14/16) | 100.0% (16/16) | 4/4 | 8 | 12 | 0 | 0 |
+| 0.42 | 0.10 | 87.5% (14/16) | 100.0% (16/16) | 4/4 | 6 | 14 | 0 | 0 |
+| 0.44 | 0.02 | 87.5% (14/16) | 100.0% (16/16) | 4/4 | 11 | 9 | 0 | 0 |
+| 0.44 | 0.03 | 87.5% (14/16) | 100.0% (16/16) | 4/4 | 11 | 9 | 0 | 0 |
+| 0.44 | 0.05 | 87.5% (14/16) | 100.0% (16/16) | 4/4 | 11 | 9 | 0 | 0 |
+| 0.44 | 0.07 | 87.5% (14/16) | 100.0% (16/16) | 4/4 | 8 | 12 | 0 | 0 |
+| 0.44 | 0.10 | 87.5% (14/16) | 100.0% (16/16) | 4/4 | 6 | 14 | 0 | 0 |
+| 0.46 | 0.02 | 87.5% (14/16) | 93.8% (15/16) | 3/4 | 11 | 7 | 2 | 0 |
+| 0.46 | 0.03 | 87.5% (14/16) | 93.8% (15/16) | 3/4 | 11 | 7 | 2 | 0 |
+| 0.46 | 0.05 | 87.5% (14/16) | 93.8% (15/16) | 3/4 | 11 | 7 | 2 | 0 |
+| 0.46 | 0.07 | 87.5% (14/16) | 93.8% (15/16) | 3/4 | 8 | 10 | 2 | 0 |
+| 0.46 | 0.10 | 87.5% (14/16) | 93.8% (15/16) | 3/4 | 6 | 12 | 2 | 0 |
+| 0.48 | 0.02 | 87.5% (14/16) | 93.8% (15/16) | 1/4 | 11 | 5 | 4 | 0 |
+| 0.48 | 0.03 | 87.5% (14/16) | 93.8% (15/16) | 1/4 | 11 | 5 | 4 | 0 |
+| 0.48 | 0.05 | 87.5% (14/16) | 93.8% (15/16) | 1/4 | 11 | 5 | 4 | 0 |
+| 0.48 | 0.07 | 87.5% (14/16) | 93.8% (15/16) | 1/4 | 8 | 8 | 4 | 0 |
+| 0.48 | 0.10 | 87.5% (14/16) | 93.8% (15/16) | 1/4 | 6 | 10 | 4 | 0 |
+| 0.50 | 0.02 | 75.0% (12/16) | 75.0% (12/16) | 1/4 | 11 | 2 | 7 | 0 |
+| 0.50 | 0.03 | 75.0% (12/16) | 75.0% (12/16) | 1/4 | 11 | 2 | 7 | 0 |
+| 0.50 | 0.05 | 75.0% (12/16) | 75.0% (12/16) | 1/4 | 11 | 2 | 7 | 0 |
+| 0.50 | 0.07 | 75.0% (12/16) | 75.0% (12/16) | 1/4 | 8 | 5 | 7 | 0 |
+| 0.50 | 0.10 | 75.0% (12/16) | 75.0% (12/16) | 1/4 | 6 | 7 | 7 | 0 |
+| 0.52 | 0.02 | 75.0% (12/16) | 75.0% (12/16) | 1/4 | 11 | 2 | 7 | 0 |
+| 0.52 | 0.03 | 75.0% (12/16) | 75.0% (12/16) | 1/4 | 11 | 2 | 7 | 0 |
+| 0.52 | 0.05 | 75.0% (12/16) | 75.0% (12/16) | 1/4 | 11 | 2 | 7 | 0 |
+| 0.52 | 0.07 | 75.0% (12/16) | 75.0% (12/16) | 1/4 | 8 | 5 | 7 | 0 |
+| 0.52 | 0.10 | 75.0% (12/16) | 75.0% (12/16) | 1/4 | 6 | 7 | 7 | 0 |
+
+### Separation and recommendation
+
+Among legitimate uncertain cases that show an expected file in the top three at the current decision settings, the top-file scores range from **0.452 to 0.570**. The highest-scoring no-match case is **0.540**. The boundary gap (lowest legitimate-uncertain top score minus highest no-match top score) is **-0.087**; the ranges overlap from **0.452 to 0.540**, so no options-floor value can cleanly retain all legitimate uncertain cases while removing every no-match false positive. In particular, the castle no-match score is 0.540, while legitimate uncertain cases can score as low as 0.452.
+
+Recommendation from this grid: **options_floor 0.48 and ambiguity_margin 0.07**. The 0.48 floor is the lowest tested setting that reduces no-match false displays to 1/4 while retaining 15/16 shown hits on match-expected cases; raising it to 0.50 or 0.52 drops shown hits to 12/16 without reducing false positives further. At margin 0.07, three more borderline cases are presented as OPTIONS rather than one-file ANSWER compared with margin 0.05, with no change in measured top-1/shown hits, no-match false displays, or wrong ANSWER count in this grid. Use this as a cautious UX choice, not a statistically established optimum.
+
+Because scores overlap, a floor alone cannot eliminate all no-match suggestions without also losing legitimate uncertain matches. A possible future rule is to show OPTIONS only when the top candidate also has a filename or distinctive query-keyword match; this was not implemented or measured here. These results cover only 20 cases (and just four no-match queries), so the recommendation is sensitive to individual examples and should be rechecked against a larger, more varied set.
+
 ## Evaluation — 2026-11-17T16:00:37+05:30
 
 Hit rate: **75% (15/20)**
