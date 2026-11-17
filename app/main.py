@@ -30,8 +30,14 @@ from app.input_bar import InputBar
 from app.command_parser import parse_command, Command
 from app.query_handler import handle_query
 from app.result_card import ResultCard
-from indexing.backfill_index import backfill, index_one_file, load_indexed_folders
-from indexing.backfill_index import SCAN_EXTENSIONS
+from indexing.backfill_index import (
+    EXCLUDED_FOLDER_NAMES,
+    SUPPORTED_EXTENSIONS,
+    backfill,
+    index_one_file,
+    load_indexed_folders,
+    remove_file_index,
+)
 from pathlib import Path
 from app_paths import ensure_config_exists, get_resource_path
 
@@ -66,15 +72,30 @@ class LiveIndexHandler(FileSystemEventHandler):
         if not event.is_directory:
             self._index(event.src_path)
 
-    def _index(self, file_path):
-        from indexing.backfill_index import EXCLUDED_FOLDER_NAMES
-        path_obj = Path(file_path)
-        if any(excluded in path_obj.parts for excluded in EXCLUDED_FOLDER_NAMES):
+    def on_deleted(self, event):
+        if not event.is_directory and self._is_supported_path(event.src_path):
+            remove_file_index(event.src_path, reason="file deleted")
+
+    def on_moved(self, event):
+        if event.is_directory:
             return
-        if path_obj.suffix.lower() not in SCAN_EXTENSIONS:
+        if self._is_supported_path(event.src_path):
+            remove_file_index(event.src_path, reason="file moved")
+        self._index(event.dest_path, force=True)
+
+    @staticmethod
+    def _is_supported_path(file_path):
+        path_obj = Path(file_path)
+        return (
+            path_obj.suffix.lower() in SUPPORTED_EXTENSIONS
+            and not any(excluded in path_obj.parts for excluded in EXCLUDED_FOLDER_NAMES)
+        )
+
+    def _index(self, file_path, force=False):
+        if not self._is_supported_path(file_path):
             return
         try:
-            status = index_one_file(file_path)
+            status = index_one_file(file_path, force=force)
             print(status)
         except Exception as e:
             print(f"[ERROR - live watch] {file_path} -> {e}")

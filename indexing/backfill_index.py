@@ -20,8 +20,16 @@ from indexing.file_router import route_file
 from indexing.text_pipeline import process_document
 from indexing.vision_pipeline import describe_image
 from indexing.embedder import embed_text, embed_texts
-from storage.metadata_store import init_db, init_chunks_table, save_file_metadata, save_chunks
-from storage.vector_db.vector_store import add_item, count_items
+from storage.metadata_store import (
+    delete_file,
+    init_db,
+    init_chunks_table,
+    list_all_files,
+    record_index_failure,
+    save_file_metadata,
+    save_chunks,
+)
+from storage.vector_db.vector_store import add_item, count_items, delete_by_file
 
 import os
 from datetime import datetime
@@ -32,12 +40,14 @@ from indexing.file_router import (
     UNSUPPORTED_EXTENSIONS,
     VIDEO_EXTENSIONS,
 )
+from observability.logger import log
 
 SUPPORTED_EXTENSIONS = IMAGE_EXTENSIONS | TEXT_DOCUMENT_EXTENSIONS
 SCAN_EXTENSIONS = SUPPORTED_EXTENSIONS | VIDEO_EXTENSIONS | UNSUPPORTED_EXTENSIONS
 EXCLUDED_FOLDER_NAMES = {".git", "node_modules", "venv", "__pycache__", ".venv", "env"}
 
 SETTINGS_PATH = Path("config/settings.json")
+MAX_INDEX_FAILURES = 3
 
 
 def load_indexed_folders(settings_path=SETTINGS_PATH):
@@ -63,6 +73,25 @@ def load_indexed_folders(settings_path=SETTINGS_PATH):
 
     return folders
 
+
+def remove_file_index(file_path, reason="file removed"):
+    """Remove all searchable and metadata entries for one indexed file."""
+    delete_by_file(file_path)
+    delete_file(file_path)
+    log(f"Removed index for {file_path}: {reason}")
+
+
+def cleanup_missing_files():
+    """Remove indexed records whose source files no longer exist."""
+    removed = []
+    for metadata in list_all_files():
+        file_path = metadata["path"]
+        if not Path(file_path).exists():
+            remove_file_index(file_path, reason="source file no longer exists")
+            removed.append(file_path)
+    return removed
+
+
 def index_one_file(file_path, force=False):
     """
     Route, process, and store a single file (text or image) -- but skip
@@ -73,86 +102,112 @@ def index_one_file(file_path, force=False):
     """
     path_str = str(file_path)
 
-    if not force:
-        existing = get_file_metadata(path_str)
-        if existing is not None:
-            file_mtime = datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat()
-            if file_mtime <= existing["indexed_at"]:
-                return f"[SKIPPED - unchanged] {path_str}"
-
     category = route_file(file_path)
-
     if category in {"unsupported", "video"}:
         return f"[UNSUPPORTED - {category}] {path_str}"
     if category == "unknown":
         return f"[SKIPPED - unknown type] {path_str}"
 
-    # Filename entry -- separate from content, so a query matching the
-    # filename itself (e.g. "MySQL Handbook") can surface the file even
-    # if its content embedding alone wouldn't score highly enough.
-    filename = Path(file_path).stem  # filename without extension
-    filename_vector = embed_text(filename)
-    add_item(f"{path_str}::filename", filename_vector, metadata={
-        "path": path_str,
-        "match_type": "filename",
-        "chunk_text": filename
-    })
+    init_db()
+    init_chunks_table()
+    existing = get_file_metadata(path_str)
+    file_mtime_ns = os.stat(file_path).st_mtime_ns
+    previous_failures = 0
+    if (
+        existing is not None
+        and existing.get("file_mtime_ns") is None
+        and existing.get("failure_mtime_ns") == file_mtime_ns
+        and existing.get("fail_count", 0) >= MAX_INDEX_FAILURES
+    ):
+        log(
+            f"Skipping {path_str}: indexing failed {existing['fail_count']} "
+            "consecutive times; waiting for file modification"
+        )
+        return f"[SKIPPED - failed {existing['fail_count']} times] {path_str}"
 
-    if category == "text/document":
-        chunks = process_document(file_path)
-        save_file_metadata(path_str, category)
-        save_chunks(path_str, chunks)
+    if existing is not None and not force:
+        indexed_mtime_ns = existing.get("file_mtime_ns")
+        if indexed_mtime_ns is None:
+            failure_mtime_ns = existing.get("failure_mtime_ns")
+            failure_count = existing.get("fail_count", 0)
+            if failure_mtime_ns == file_mtime_ns and failure_count:
+                previous_failures = failure_count
+            elif failure_mtime_ns is None and not failure_count:
+                # Migrate legacy indexed rows without needlessly re-indexing
+                # files whose indexed timestamp is at least as recent as the file.
+                file_mtime = datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat()
+                if file_mtime <= existing["indexed_at"]:
+                    save_file_metadata(
+                        path_str,
+                        existing["file_type"],
+                        indexed_at=existing["indexed_at"],
+                        file_mtime_ns=file_mtime_ns,
+                    )
+                    return f"[SKIPPED - unchanged] {path_str}"
+                remove_file_index(path_str, reason="file changed")
+            else:
+                remove_file_index(path_str, reason="file changed")
+        elif file_mtime_ns == indexed_mtime_ns:
+            return f"[SKIPPED - unchanged] {path_str}"
+        else:
+            remove_file_index(path_str, reason="file changed")
+    elif existing is not None:
+        if existing.get("file_mtime_ns") is not None:
+            remove_file_index(path_str, reason="forced re-index")
+        elif existing.get("failure_mtime_ns") != file_mtime_ns:
+            remove_file_index(path_str, reason="file changed")
+        else:
+            previous_failures = existing.get("fail_count", 0)
 
-        vectors = embed_texts(chunks)
-        for i, (chunk, vector) in enumerate(zip(chunks, vectors)):
-            add_item(f"{path_str}::{i}", vector, metadata={
+    try:
+        if category == "text/document":
+            chunks = process_document(file_path)
+            vectors = embed_texts(chunks)
+
+            for i, (chunk, vector) in enumerate(zip(chunks, vectors)):
+                add_item(f"{path_str}::{i}", vector, metadata={
+                    "path": path_str,
+                    "chunk_index": i,
+                    "chunk_text": chunk[:200],
+                    "match_type": "content"
+                })
+
+            save_chunks(path_str, chunks)
+        elif category == "image":
+            description = describe_image(path_str)
+            vector = embed_text(description)
+            add_item(path_str, vector, metadata={
                 "path": path_str,
-                "chunk_index": i,
-                "chunk_text": chunk[:200],
+                "description": description,
                 "match_type": "content"
             })
+            chunks = None
+        else:
+            raise ValueError(f"Unsupported file type for indexing: {category}")
 
-        # Document-level summary via Qwen3-1.7B -- DISABLED for now.
-        # Empirically tested (see decisions log): summary embeddings never
-        # outperformed existing content chunks or filename matches across
-        # multiple real queries (vague and specific), likely because a
-        # single broad summary vector gets diluted against hundreds of
-        # narrow, specific chunk embeddings in dense retrieval. No
-        # measurable search-quality benefit found, but real added cost
-        # (several seconds/document indexing time, extra VRAM for a third
-        # model). Code kept for potential future refinement -- not deleted.
-        #
-        # try:
-        #     from indexing.summarizer import summarize_document
-        #     summary = summarize_document(chunks)
-        #     if summary:
-        #         summary_vector = embed_text(summary)
-        #         add_item(f"{path_str}::summary", summary_vector, metadata={
-        #             "path": path_str,
-        #             "match_type": "summary",
-        #             "chunk_text": summary[:200]
-        #         })
-        # except Exception as e:
-        #     print(f"[WARNING] Summary generation failed for {path_str}: {e}")
-
-        return f"[INDEXED - text] {path_str} -> {len(chunks)} chunks"
-
-    elif category == "image":
-        description = describe_image(path_str)
-        vector = embed_text(description)
-        add_item(path_str, vector, metadata={
+        filename = Path(file_path).stem
+        filename_vector = embed_text(filename)
+        add_item(f"{path_str}::filename", filename_vector, metadata={
             "path": path_str,
-            "description": description,
-            "match_type": "content"
+            "match_type": "filename",
+            "chunk_text": filename
         })
-        save_file_metadata(path_str, category)
-        return f"[INDEXED - image] {path_str} -> \"{description}\""
-    
-    elif category == "video":
-        return f"[UNSUPPORTED - video not yet processed] {path_str}"
 
-    else:
-        return f"[SKIPPED - unknown type] {path_str}"
+        save_file_metadata(path_str, category, file_mtime_ns=file_mtime_ns)
+    except Exception as error:
+        log(f"[ERROR] Failed to index {path_str}: {error}")
+        remove_file_index(path_str, reason=f"indexing failed: {error}")
+        record_index_failure(
+            path_str,
+            category,
+            previous_failures + 1,
+            file_mtime_ns,
+        )
+        raise
+
+    if category == "text/document":
+        return f"[INDEXED - text] {path_str} -> {len(chunks)} chunks"
+    return f"[INDEXED - image] {path_str} -> \"{description}\""
 
 def backfill(settings_path=SETTINGS_PATH, progress_callback=None, error_callback=None):
     """
@@ -202,12 +257,6 @@ def backfill(settings_path=SETTINGS_PATH, progress_callback=None, error_callback
             status = index_one_file(file_path, force=rebuild_index)
             if "SKIPPED - unknown type" in status:
                 pass  # not an error, just an unsupported file type, no red icon
-        except ValueError as e:
-            # ValueError specifically means "unsupported file type" (raised
-            # by text_pipeline.py's process_document) -- not a real failure,
-            # just something we don't support yet. Don't alarm the user
-            # with a red error icon for this.
-            status = f"[UNSUPPORTED] {file_path} -> {e}"
         except Exception as e:
             # A genuine, unexpected failure -- this IS worth flagging to
             # the user with the red error indicator.
@@ -217,6 +266,8 @@ def backfill(settings_path=SETTINGS_PATH, progress_callback=None, error_callback
 
         results.append(status)
         print(status)
+
+    cleanup_missing_files()
 
 
 if __name__ == "__main__":

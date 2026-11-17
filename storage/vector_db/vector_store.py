@@ -48,4 +48,9 @@ def count_items():
 
 
 def delete_items_for_path(path):
-    _get_collection().delete(where={"path": str(path)})
+    delete_by_file(path)
+
+
+def delete_by_file(file_path):
+    """Delete every vector entry associated with a file path."""
+    _get_collection().delete(where={"path": str(file_path)})
