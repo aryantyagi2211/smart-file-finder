@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('app_icon.ico', '.'), ('config/harness_limits.json', 'config')]
+datas = [('app_icon.ico', '.'), ('config', 'config')]
 binaries = []
 hiddenimports = []
 tmp_ret = collect_all('PyQt6')

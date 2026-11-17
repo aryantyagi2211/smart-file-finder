@@ -41,16 +41,17 @@ from indexing.file_router import (
     VIDEO_EXTENSIONS,
 )
 from observability.logger import log
+from app_paths import get_config_path
 
 SUPPORTED_EXTENSIONS = IMAGE_EXTENSIONS | TEXT_DOCUMENT_EXTENSIONS
 SCAN_EXTENSIONS = SUPPORTED_EXTENSIONS | VIDEO_EXTENSIONS | UNSUPPORTED_EXTENSIONS
 EXCLUDED_FOLDER_NAMES = {".git", "node_modules", "venv", "__pycache__", ".venv", "env"}
 
-SETTINGS_PATH = Path("config/settings.json")
+SETTINGS_PATH = get_config_path("settings.json")
 MAX_INDEX_FAILURES = 3
 
 
-def load_indexed_folders(settings_path=SETTINGS_PATH):
+def load_indexed_folders(settings_path=None):
     """
     Return folders to index: auto-detected standard user folders
     (Desktop, Documents, Downloads) always included, plus any additional
@@ -59,17 +60,25 @@ def load_indexed_folders(settings_path=SETTINGS_PATH):
     """
     from indexing.folder_detection import get_default_folders
 
-    folders = get_default_folders()
+    if settings_path is None:
+        settings_path = get_config_path("settings.json")
+    else:
+        settings_path = Path(settings_path)
+        if not settings_path.exists():
+            settings_path.parent.mkdir(parents=True, exist_ok=True)
+            settings_path.write_text(
+                json.dumps({"indexed_folders": []}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            log(f"Created missing config file with defaults: {settings_path}")
 
-    try:
-        with open(settings_path, encoding="utf-8-sig") as f:
-            settings = json.load(f)
-        extra_folders = settings.get("indexed_folders", [])
-        for folder in extra_folders:
-            if folder not in folders:
-                folders.append(folder)
-    except FileNotFoundError:
-        pass
+    folders = get_default_folders()
+    with open(settings_path, encoding="utf-8-sig") as f:
+        settings = json.load(f)
+    extra_folders = settings.get("indexed_folders", [])
+    for folder in extra_folders:
+        if folder not in folders:
+            folders.append(folder)
 
     return folders
 
@@ -209,7 +218,7 @@ def index_one_file(file_path, force=False):
         return f"[INDEXED - text] {path_str} -> {len(chunks)} chunks"
     return f"[INDEXED - image] {path_str} -> \"{description}\""
 
-def backfill(settings_path=SETTINGS_PATH, progress_callback=None, error_callback=None):
+def backfill(settings_path=None, progress_callback=None, error_callback=None):
     """
     Recursively scan every folder listed in settings.json and index all
     supported files found.

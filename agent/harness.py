@@ -18,7 +18,7 @@ Real implementations get wired in as they're built:
 from enum import Enum
 import time
 import json
-from app_paths import get_base_dir
+from app_paths import get_config_path
 
 
 class AgentAction(Enum):
@@ -30,7 +30,7 @@ class AgentAction(Enum):
 
 def load_limits(config_path=None):
     if config_path is None:
-        config_path = get_base_dir() / "config" / "harness_limits.json"
+        config_path = get_config_path("harness_limits.json")
     with open(config_path, encoding="utf-8-sig") as f:
         return json.load(f)
 

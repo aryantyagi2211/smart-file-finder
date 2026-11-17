@@ -11,7 +11,7 @@ readonly database" errors, confirmed during real installer testing.
 
 import sys
 import os
-import shutil
+import json
 from pathlib import Path
 
 APP_FOLDER_NAME = "SmartFileFinder"
@@ -30,28 +30,39 @@ def get_base_dir():
     return base_dir
 
 
-def ensure_config_exists():
-    """
-    Copies config/harness_limits.json into the user-writable app-data
-    folder if it doesn't already exist there -- needed since the
-    packaged .exe's own folder (or Program Files) isn't writable, and
-    config files can't just live next to the .exe like they do when
-    running from source.
-    """
-    base_dir = get_base_dir()
-    dest_config_dir = base_dir / "config"
-    dest_config_dir.mkdir(parents=True, exist_ok=True)
-    dest_file = dest_config_dir / "harness_limits.json"
+def get_config_path(filename):
+    """Return a config file path independent of the current working directory."""
+    if getattr(sys, "frozen", False):
+        config_dir = Path(sys.executable).resolve().parent / "config"
+    else:
+        config_dir = Path(__file__).resolve().parent / "config"
 
-    if not dest_file.exists():
-        # When running from source, the real config file sits at
-        # <project_root>/config/harness_limits.json
-        source_file = Path(__file__).parent / "config" / "harness_limits.json"
-        if source_file.exists():
-            shutil.copy(source_file, dest_file)
-        else:
-            # Fallback: write sensible defaults if source is also missing
-            dest_file.write_text('{\n  "max_reformulations": 2,\n  "timeout_seconds": 5,\n  "confidence_threshold": 0.5\n}')
+    config_path = config_dir / filename
+    defaults = {
+        "settings.json": {"indexed_folders": []},
+        "harness_limits.json": {
+            "max_reformulations": 2,
+            "timeout_seconds": 5,
+            "confidence_threshold": 0.5,
+        },
+    }
+    if not config_path.exists() and filename in defaults:
+        config_dir.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(
+            json.dumps(defaults[filename], indent=2) + "\n",
+            encoding="utf-8",
+        )
+        from observability.logger import log
+
+        log(f"Created missing config file with defaults: {config_path}")
+
+    return config_path
+
+
+def ensure_config_exists():
+    """Ensure the runtime configuration files exist with usable defaults."""
+    get_config_path("settings.json")
+    get_config_path("harness_limits.json")
 
 
 def get_resource_path(filename):

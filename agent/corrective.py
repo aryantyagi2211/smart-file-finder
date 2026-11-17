@@ -37,11 +37,11 @@ class CorrectiveResult:
     reformulated_query: str = None
 
 
-from app_paths import get_base_dir
+from app_paths import get_config_path
 
 def load_threshold(config_path=None):
     if config_path is None:
-        config_path = get_base_dir() / "config" / "harness_limits.json"
+        config_path = get_config_path("harness_limits.json")
     with open(config_path, encoding="utf-8-sig") as f:
         return json.load(f)["confidence_threshold"]
 
