@@ -12,9 +12,8 @@ from pathlib import Path
 
 def get_default_folders():
     """
-    Return a list of real, existing standard user folders to index:
-    Desktop, Documents, Downloads. Skips any that don't exist on this
-    system rather than erroring.
+    Return absolute standard user folder paths. Keeping unavailable paths
+    lets cleanup protect their existing index entries until they return.
     """
     home = Path(os.path.expanduser("~"))
     candidates = [
@@ -22,4 +21,4 @@ def get_default_folders():
         home / "Documents",
         home / "Downloads",
     ]
-    return [str(folder) for folder in candidates if folder.exists()]
+    return [folder.resolve().as_posix() for folder in candidates]

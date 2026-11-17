@@ -17,6 +17,22 @@ from pathlib import Path
 APP_FOLDER_NAME = "SmartFileFinder"
 
 
+def get_app_root_dir():
+    """Return the base for resolving app-relative paths."""
+    if getattr(sys, "frozen", False):
+        return get_base_dir()
+    return Path(__file__).resolve().parent
+
+
+def normalize_path(path, relative_to=None):
+    """Return an absolute path using consistent forward slashes."""
+    resolved = Path(path)
+    if not resolved.is_absolute():
+        resolved = (Path(relative_to) if relative_to is not None
+                    else get_app_root_dir()) / resolved
+    return resolved.resolve().as_posix()
+
+
 def get_base_dir():
     """
     Returns a writable, per-user folder for the app's working data

@@ -175,6 +175,9 @@ class SmartFileFinderApp:
         folders = load_indexed_folders()
         handler = LiveIndexHandler()
         for folder in folders:
+            if not Path(folder).is_dir():
+                log(f"WARNING: Not watching unreachable folder: {folder}")
+                continue
             observer = Observer()
             observer.schedule(handler, folder, recursive=True)
             observer.daemon = True

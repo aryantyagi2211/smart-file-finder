@@ -15,6 +15,7 @@ from storage.metadata_store import (
     save_chunks,
     get_chunks,
 )
+from app_paths import normalize_path
 
 
 def test_save_and_get_file_metadata(tmp_path):
@@ -25,7 +26,7 @@ def test_save_and_get_file_metadata(tmp_path):
     result = get_file_metadata("some/file.pdf", db_path=db_path)
 
     assert result is not None
-    assert result["path"] == "some/file.pdf"
+    assert result["path"] == normalize_path("some/file.pdf")
     assert result["file_type"] == "text/document"
     assert "indexed_at" in result
 
@@ -59,7 +60,7 @@ def test_list_all_files(tmp_path):
     all_files = list_all_files(db_path=db_path)
     paths = {f["path"] for f in all_files}
 
-    assert paths == {"a.pdf", "b.png"}
+    assert paths == {normalize_path("a.pdf"), normalize_path("b.png")}
 
 
 def test_save_and_get_chunks(tmp_path):

@@ -18,12 +18,13 @@ from pathlib import Path
 
 from indexing.backfill_index import index_one_file
 from app.query_handler import handle_query
-from storage.metadata_store import get_file_metadata
-from storage.vector_db.vector_store import delete_items_for_path
+from storage.metadata_store import delete_file, get_file_metadata
+from storage.vector_db.vector_store import delete_by_file
 
 TEST_FILE_NAME = "integration_test_unique_marker_file.pdf"
-SOURCE_PDF = Path("test_data/Adaptive rag.pdf")  # a real, known-good PDF to copy from
-TEST_FILE_PATH = Path("test_data") / TEST_FILE_NAME
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SOURCE_PDF = PROJECT_ROOT / "test_data" / "Adaptive rag.pdf"
+TEST_FILE_PATH = PROJECT_ROOT / "test_data" / TEST_FILE_NAME
 
 
 def setup_module(module):
@@ -33,9 +34,11 @@ def setup_module(module):
 
 def teardown_module(module):
     """Remove the test file after the test finishes, pass or fail."""
-    delete_items_for_path(TEST_FILE_PATH)
+    delete_by_file(TEST_FILE_PATH)
+    delete_file(TEST_FILE_PATH)
     if TEST_FILE_PATH.exists():
         TEST_FILE_PATH.unlink()
+    assert get_file_metadata(TEST_FILE_PATH) is None
 
 
 def test_full_pipeline_index_and_search():

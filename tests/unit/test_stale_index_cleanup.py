@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app_paths import normalize_path
 from indexing import backfill_index
 from storage import metadata_store
 from storage.vector_db import vector_store
@@ -41,6 +42,9 @@ def isolated_index(tmp_path, monkeypatch):
     monkeypatch.setattr(vector_store, "_get_collection", lambda: collection)
     monkeypatch.setattr(backfill_index, "init_db", lambda: None)
     monkeypatch.setattr(backfill_index, "init_chunks_table", lambda: None)
+    monkeypatch.setattr(backfill_index, "path_migration_complete", lambda: True)
+    monkeypatch.setattr(backfill_index, "delete_relative_path_entries", lambda: [])
+    monkeypatch.setattr(backfill_index, "migrate_relative_paths", lambda: [])
     monkeypatch.setattr(
         backfill_index,
         "get_file_metadata",
@@ -112,7 +116,7 @@ def test_changed_file_removes_old_chunks_and_indexes_new_content(
 
     backfill_index.index_one_file(file_path)
     old_mtime_ns = file_path.stat().st_mtime_ns
-    assert f"{file_path}::1" in collection.items
+    assert f"{normalize_path(file_path)}::1" in collection.items
 
     file_path.write_text("new_unique", encoding="utf-8")
     file_path.touch()
@@ -121,8 +125,8 @@ def test_changed_file_removes_old_chunks_and_indexes_new_content(
 
     backfill_index.index_one_file(file_path)
 
-    assert f"{file_path}::1" not in collection.items
-    assert f"{file_path}::0" in collection.items
+    assert f"{normalize_path(file_path)}::1" not in collection.items
+    assert f"{normalize_path(file_path)}::0" in collection.items
     indexed_content = [
         item["metadata"].get("chunk_text")
         for item in collection.items.values()
@@ -165,7 +169,7 @@ def test_cleanup_removes_files_missing_from_disk(tmp_path, isolated_index):
 
     removed = backfill_index.cleanup_missing_files()
 
-    assert str(file_path) in removed
+    assert normalize_path(file_path) in removed
     assert not any(
         item["metadata"].get("path") == str(file_path)
         for item in collection.items.values()
@@ -197,14 +201,14 @@ def test_move_event_removes_old_path_and_indexes_new_path(
     assert metadata_store.get_file_metadata(old_path, db_path=db_path) is None
     assert metadata_store.get_file_metadata(new_path, db_path=db_path) is not None
     assert not any(
-        item["metadata"].get("path") == str(old_path)
+        item["metadata"].get("path") == normalize_path(old_path)
         for item in collection.items.values()
     )
     assert any(
-        item["metadata"].get("path") == str(new_path)
+        item["metadata"].get("path") == normalize_path(new_path)
         for item in collection.items.values()
     )
-    assert str(old_path) not in [
+    assert normalize_path(old_path) not in [
         file["path"] for file in metadata_store.list_all_files(db_path=db_path)
     ]
 
@@ -330,7 +334,7 @@ def test_backfill_continues_after_one_file_fails(
     monkeypatch.setattr(
         backfill_index,
         "load_indexed_folders",
-        lambda settings_path: [str(tmp_path)],
+        lambda settings_path: [normalize_path(tmp_path)],
     )
     monkeypatch.setattr(backfill_index, "count_items", lambda: 1)
 
@@ -345,6 +349,135 @@ def test_backfill_continues_after_one_file_fails(
         good_file.stat().st_mtime_ns
     )
     assert any(
-        item["metadata"].get("path") == str(good_file)
+        item["metadata"].get("path") == normalize_path(good_file)
         for item in collection.items.values()
     )
+
+
+def test_relative_settings_folder_resolves_from_project_after_cwd_change(
+    tmp_path, monkeypatch
+):
+    import json
+
+    project_root = tmp_path / "project"
+    settings_path = project_root / "config" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(
+        json.dumps({"indexed_folders": ["test_data"]}),
+        encoding="utf-8",
+    )
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setattr(backfill_index, "get_app_root_dir", lambda: project_root)
+    monkeypatch.setattr(
+        "indexing.folder_detection.get_default_folders",
+        lambda: [],
+    )
+
+    folders = backfill_index.load_indexed_folders(settings_path)
+
+    assert folders == [(project_root / "test_data").resolve().as_posix()]
+    assert not (elsewhere / "test_data").exists()
+
+
+def test_relative_settings_folder_uses_user_data_root_when_frozen(
+    tmp_path, monkeypatch
+):
+    import json
+
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        json.dumps({"indexed_folders": ["test_data"]}),
+        encoding="utf-8",
+    )
+    installed_data_root = tmp_path / "installed-data"
+    monkeypatch.setattr(backfill_index.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(backfill_index, "get_base_dir", lambda: installed_data_root)
+    monkeypatch.setattr(
+        "indexing.folder_detection.get_default_folders",
+        lambda: [],
+    )
+
+    assert backfill_index.load_indexed_folders(settings_path) == [
+        (installed_data_root / "test_data").resolve().as_posix()
+    ]
+
+
+def test_indexed_metadata_chunks_and_vectors_use_absolute_normalized_paths(
+    tmp_path, isolated_index
+):
+    db_path, collection = isolated_index
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    file_path = parent / "document.txt"
+    file_path.write_text("absolute_path_marker", encoding="utf-8")
+    non_normalized_path = parent / "child" / ".." / "document.txt"
+
+    backfill_index.index_one_file(non_normalized_path)
+
+    expected_path = file_path.resolve().as_posix()
+    metadata = metadata_store.get_file_metadata(file_path, db_path=db_path)
+    chunks = metadata_store.get_chunks(file_path, db_path=db_path)
+    vector_paths = {
+        item["metadata"]["path"] for item in collection.items.values()
+    }
+
+    assert metadata["path"] == expected_path
+    assert chunks == ["absolute_path_marker"]
+    assert vector_paths == {expected_path}
+    assert "\\" not in metadata["path"]
+    assert "/../" not in metadata["path"]
+
+
+def test_cleanup_uses_absolute_paths_after_working_directory_changes(
+    tmp_path, isolated_index, monkeypatch
+):
+    db_path, collection = isolated_index
+    indexed_root = tmp_path / "indexed"
+    indexed_root.mkdir()
+    file_path = indexed_root / "still_present.txt"
+    file_path.write_text("keep_this_index", encoding="utf-8")
+    backfill_index.index_one_file(file_path)
+    monkeypatch.chdir(tmp_path)
+
+    removed = backfill_index.cleanup_missing_files(
+        indexed_folders=[indexed_root]
+    )
+
+    assert removed == []
+    assert metadata_store.get_file_metadata(file_path, db_path=db_path) is not None
+    assert any(item["metadata"]["path"] == file_path.resolve().as_posix()
+               for item in collection.items.values())
+
+
+def test_cleanup_skips_unreachable_indexed_folder(
+    tmp_path, isolated_index, monkeypatch
+):
+    db_path, collection = isolated_index
+    unreachable_root = tmp_path / "offline-folder"
+    file_path = unreachable_root / "previously_indexed.txt"
+    normalized_path = normalize_path(file_path)
+    metadata_store.save_file_metadata(
+        file_path, "text/document", db_path=db_path
+    )
+    metadata_store.save_chunks(
+        file_path, ["old content"], db_path=db_path
+    )
+    collection.upsert(
+        ids=[f"{normalized_path}::0"],
+        embeddings=[[1.0]],
+        metadatas=[{"path": normalized_path, "match_type": "content"}],
+    )
+    warnings = []
+    monkeypatch.setattr(backfill_index, "log", warnings.append)
+
+    removed = backfill_index.cleanup_missing_files(
+        indexed_folders=[unreachable_root]
+    )
+
+    assert removed == []
+    assert metadata_store.get_file_metadata(file_path, db_path=db_path) is not None
+    assert metadata_store.get_chunks(file_path, db_path=db_path) == ["old content"]
+    assert collection.items
+    assert any("unreachable folder" in warning for warning in warnings)

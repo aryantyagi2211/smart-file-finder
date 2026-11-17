@@ -14,6 +14,7 @@ file just refreshes it rather than duplicating.
 """
 
 import json
+import sys
 from pathlib import Path
 
 from indexing.file_router import route_file
@@ -25,11 +26,18 @@ from storage.metadata_store import (
     init_db,
     init_chunks_table,
     list_all_files,
+    migrate_relative_paths,
+    path_migration_complete,
     record_index_failure,
     save_file_metadata,
     save_chunks,
 )
-from storage.vector_db.vector_store import add_item, count_items, delete_by_file
+from storage.vector_db.vector_store import (
+    add_item,
+    count_items,
+    delete_by_file,
+    delete_relative_path_entries,
+)
 
 import os
 from datetime import datetime
@@ -41,7 +49,7 @@ from indexing.file_router import (
     VIDEO_EXTENSIONS,
 )
 from observability.logger import log
-from app_paths import get_config_path
+from app_paths import get_app_root_dir, get_base_dir, get_config_path, normalize_path
 
 SUPPORTED_EXTENSIONS = IMAGE_EXTENSIONS | TEXT_DOCUMENT_EXTENSIONS
 SCAN_EXTENSIONS = SUPPORTED_EXTENSIONS | VIDEO_EXTENSIONS | UNSUPPORTED_EXTENSIONS
@@ -76,28 +84,71 @@ def load_indexed_folders(settings_path=None):
     with open(settings_path, encoding="utf-8-sig") as f:
         settings = json.load(f)
     extra_folders = settings.get("indexed_folders", [])
+    relative_root = (
+        get_base_dir() if getattr(sys, "frozen", False) else get_app_root_dir()
+    )
     for folder in extra_folders:
-        if folder not in folders:
-            folders.append(folder)
+        try:
+            resolved_folder = normalize_path(folder, relative_to=relative_root)
+        except (OSError, RuntimeError) as error:
+            log(f"WARNING: Cannot resolve indexed folder {folder!r}: {error}")
+            continue
+        if resolved_folder.casefold() not in {item.casefold() for item in folders}:
+            folders.append(resolved_folder)
 
     return folders
 
 
 def remove_file_index(file_path, reason="file removed"):
     """Remove all searchable and metadata entries for one indexed file."""
-    delete_by_file(file_path)
-    delete_file(file_path)
-    log(f"Removed index for {file_path}: {reason}")
+    normalized_path = normalize_path(file_path)
+    delete_by_file(normalized_path)
+    delete_file(normalized_path)
+    log(f"Removed index for {normalized_path}: {reason}")
 
 
-def cleanup_missing_files():
+def _is_within(path, folder):
+    try:
+        Path(path).relative_to(Path(folder))
+        return True
+    except ValueError:
+        return False
+
+
+def cleanup_missing_files(indexed_folders=None):
     """Remove indexed records whose source files no longer exist."""
     removed = []
+    folders = indexed_folders if indexed_folders is not None else load_indexed_folders()
+    reachable_folders = []
+    unreachable_folders = []
+    for folder in folders:
+        normalized_folder = normalize_path(folder)
+        folder_path = Path(normalized_folder)
+        try:
+            resolved_folder = folder_path.resolve(strict=True)
+            if not resolved_folder.is_dir() or not os.access(resolved_folder, os.R_OK):
+                raise OSError("folder is not a readable directory")
+            reachable_folders.append(resolved_folder.as_posix())
+        except (OSError, RuntimeError) as error:
+            unreachable_folders.append(normalized_folder)
+            log(f"WARNING: Skipping cleanup for unreachable folder {normalized_folder}: {error}")
+
     for metadata in list_all_files():
         file_path = metadata["path"]
-        if not Path(file_path).exists():
-            remove_file_index(file_path, reason="source file no longer exists")
-            removed.append(file_path)
+        try:
+            normalized_path = normalize_path(file_path)
+        except (OSError, RuntimeError) as error:
+            log(f"WARNING: Skipping cleanup for unresolvable indexed path {file_path!r}: {error}")
+            continue
+        if not Path(normalized_path).exists():
+            if any(_is_within(normalized_path, folder) for folder in unreachable_folders):
+                continue
+            if indexed_folders is not None and not any(
+                _is_within(normalized_path, folder) for folder in reachable_folders
+            ) and not any(_is_within(normalized_path, folder) for folder in unreachable_folders):
+                continue
+            remove_file_index(normalized_path, reason="source file no longer exists")
+            removed.append(normalized_path)
     return removed
 
 
@@ -109,7 +160,8 @@ def index_one_file(file_path, force=False):
     or partial filename queries can match even when content-based
     semantic search doesn't surface the file.
     """
-    path_str = str(file_path)
+    path_str = normalize_path(file_path)
+    file_path = Path(path_str)
 
     category = route_file(file_path)
     if category in {"unsupported", "video"}:
@@ -218,7 +270,8 @@ def index_one_file(file_path, force=False):
         return f"[INDEXED - text] {path_str} -> {len(chunks)} chunks"
     return f"[INDEXED - image] {path_str} -> \"{description}\""
 
-def backfill(settings_path=None, progress_callback=None, error_callback=None):
+def backfill(settings_path=None, progress_callback=None, error_callback=None,
+             indexed_folders=None):
     """
     Recursively scan every folder listed in settings.json and index all
     supported files found.
@@ -232,16 +285,30 @@ def backfill(settings_path=None, progress_callback=None, error_callback=None):
     """
     init_db()
     init_chunks_table()
+    if not path_migration_complete():
+        for legacy_path in delete_relative_path_entries():
+            log(f"Removed legacy relative vector path: {legacy_path}")
+        for legacy_path in migrate_relative_paths():
+            log(f"Removed legacy relative metadata path and chunks: {legacy_path}")
     rebuild_index = count_items() == 0
 
-    folders = load_indexed_folders(settings_path)
+    folders = (
+        [normalize_path(folder) for folder in indexed_folders]
+        if indexed_folders is not None
+        else load_indexed_folders(settings_path)
+    )
 
     # First pass: count total matching files across all folders, so we
     # can report real progress (X of Y), not a fake estimate.
     all_files = []
     for folder in folders:
         folder_path = Path(folder)
-        if not folder_path.exists():
+        try:
+            folder_path = folder_path.resolve(strict=True)
+            if not folder_path.is_dir() or not os.access(folder_path, os.R_OK):
+                raise OSError("folder is not a readable directory")
+        except (OSError, RuntimeError) as error:
+            log(f"WARNING: Skipping backfill for unreachable folder {folder}: {error}")
             continue
         for file_path in folder_path.rglob("*"):
             if not file_path.is_file():
@@ -250,7 +317,7 @@ def backfill(settings_path=None, progress_callback=None, error_callback=None):
                 continue
             if file_path.suffix.lower() not in SCAN_EXTENSIONS:
                 continue
-            all_files.append((folder_path.name, file_path))
+            all_files.append((folder_path.name, file_path.resolve()))
 
     total = len(all_files)
     results = []
@@ -276,7 +343,7 @@ def backfill(settings_path=None, progress_callback=None, error_callback=None):
         results.append(status)
         print(status)
 
-    cleanup_missing_files()
+    cleanup_missing_files(indexed_folders=folders)
 
 
 if __name__ == "__main__":

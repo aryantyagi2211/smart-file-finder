@@ -31,12 +31,15 @@ def handle_query(query_text):
     """
     log(f"Query received: {query_text}")
     trace = start_trace(query_text)
+    best_score = 0.0
 
     def retriever(q):
         return retrieve(q)
 
     def corrective_check(candidates, q):
+        nonlocal best_score
         result = check_results(candidates, q)
+        best_score = max(best_score, result.best_score)
         record_attempt(
             trace, q, candidates, result.confident, result.best_score,
             result.reformulated_query, result.strategy
@@ -77,4 +80,5 @@ def handle_query(query_text):
             "found": False,
             "reason": outcome["reason"],
             "message": outcome.get("message"),
+            "best_score": best_score,
         }

@@ -98,4 +98,4 @@ def test_config_files_are_found_from_a_different_working_directory(
         "timeout_seconds": 9,
         "confidence_threshold": 0.6,
     }
-    assert str(tmp_path / "extra") in load_indexed_folders()
+    assert app_paths.normalize_path(tmp_path / "extra") in load_indexed_folders()
