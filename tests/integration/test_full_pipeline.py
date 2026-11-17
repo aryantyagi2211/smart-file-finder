@@ -55,12 +55,16 @@ def test_full_pipeline_index_and_search():
     # (Adaptive RAG's real content, so an unrelated match would be a real failure)
     result = handle_query("adaptive retrieval augmented generation for question complexity")
 
-    assert result["found"] is True
-    # Since we copied the same content under a new name, either the
-    # original or the copy could win the ranking (they're identical) --
-    # what matters is that SOME correct file (not an unrelated one) is found.
-    assert (
-        "rag" in result["path"].lower()
-        or "adaptive" in result["path"].lower()
-        or Path(result["path"]).name == TEST_FILE_NAME
+    result_paths = (
+        [option["path"] for option in result["options"]]
+        if result.get("action") == "options"
+        else ([result["path"]] if result.get("found") else [])
+    )
+    # The copied PDF and its original have identical content, so they should
+    # be surfaced as an uncertain pick list rather than auto-selecting one.
+    assert any(
+        "rag" in path.lower()
+        or "adaptive" in path.lower()
+        or Path(path).name == TEST_FILE_NAME
+        for path in result_paths
     )

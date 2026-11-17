@@ -66,7 +66,10 @@ def test_missing_harness_limits_file_is_created_with_defaults(
     assert load_limits() == {
         "max_reformulations": 2,
         "timeout_seconds": 5,
-        "confidence_threshold": 0.5,
+        "confidence_threshold": 0.55,
+        "ambiguity_margin": 0.05,
+        "options_floor": 0.45,
+        "max_options": 3,
     }
     assert app_paths.get_config_path("harness_limits.json").exists()
     assert any("harness_limits.json" in message for message in messages)
@@ -97,5 +100,8 @@ def test_config_files_are_found_from_a_different_working_directory(
         "max_reformulations": 4,
         "timeout_seconds": 9,
         "confidence_threshold": 0.6,
+        "ambiguity_margin": 0.05,
+        "options_floor": 0.45,
+        "max_options": 3,
     }
     assert app_paths.normalize_path(tmp_path / "extra") in load_indexed_folders()

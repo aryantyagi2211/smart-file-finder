@@ -27,9 +27,9 @@ from watchdog.events import FileSystemEventHandler
 
 from app.hotkey_listener import register_hotkey, DEFAULT_HOTKEY
 from app.input_bar import InputBar
-from app.command_parser import parse_command, Command
+from app.command_parser import parse_command, Command, should_auto_open
 from app.query_handler import handle_query
-from app.result_card import ResultCard
+from app.result_card import OptionsResultCard, ResultCard
 from indexing.backfill_index import (
     EXCLUDED_FOLDER_NAMES,
     SUPPORTED_EXTENSIONS,
@@ -202,6 +202,11 @@ class SmartFileFinderApp:
 
         result = handle_query(parsed.query)
 
+        if result.get("action") == "options":
+            self.result_card = OptionsResultCard(result["options"])
+            self.result_card.show()
+            return
+
         if not result["found"]:
             QMessageBox.information(
                 self.input_bar,
@@ -219,7 +224,7 @@ class SmartFileFinderApp:
             explanation=result["explanation"]
         )
 
-        if parsed.command == Command.OPEN:
+        if should_auto_open(parsed.command, result.get("action")):
             self.result_card._handle_open()
         elif parsed.command == Command.SHOW:
             self.result_card._handle_show()

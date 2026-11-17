@@ -57,3 +57,8 @@ def parse_command(raw_input):
 
     # No command prefix at all -- plain text defaults to /find.
     return ParsedCommand(command=Command.FIND, query=raw_input)
+
+
+def should_auto_open(command, result_action):
+    """Only explicit /open on a confident single-file answer may auto-open."""
+    return command == Command.OPEN and result_action == "answer"

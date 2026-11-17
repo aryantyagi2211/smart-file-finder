@@ -16,6 +16,7 @@ from observability.logger import log
 from observability.tracer import (
     start_trace,
     record_attempt,
+    record_decision,
     record_failure,
     finalize_trace,
     write_trace,
@@ -26,8 +27,8 @@ def handle_query(query_text):
     """
     Run a query through the full harness. Returns a dict:
       {"found": True, "path": ..., "score": ..., "explanation": ...}
-      or
-      {"found": False, "reason": ...}
+      {"found": False, "action": "options", "options": [...]}
+      or {"found": False, "action": "no_match", "reason": ...}
     """
     log(f"Query received: {query_text}")
     trace = start_trace(query_text)
@@ -56,16 +57,43 @@ def handle_query(query_text):
 
     if outcome["action"] == AgentAction.ANSWER:
         best = outcome["result"]
+        record_decision(trace, "confident", outcome.get("candidates", [best]))
         finalize_trace(trace, action="answer", result_path=best.path, explanation=outcome["explanation"])
         write_trace(trace)
         log(f"Query resolved: {best.path}")
         return {
             "found": True,
+            "action": "answer",
             "path": best.path,
             "score": best.score,
             "explanation": outcome["explanation"]
         }
+    elif outcome["action"] == AgentAction.OPTIONS:
+        candidates = outcome.get("candidates", [])
+        record_decision(trace, "options", candidates)
+        finalize_trace(trace, action="options", reason="uncertain match")
+        write_trace(trace)
+        log(
+            "Query returned OPTIONS: "
+            + ", ".join(f"{option['path']} ({option['score']:.3f})"
+                        for option in outcome["options"])
+        )
+        return {
+            "found": False,
+            "action": "options",
+            "options": [
+                {
+                    "path": option["path"],
+                    "score": option["score"],
+                    "explanation": option["explanation"],
+                }
+                for option in outcome["options"]
+            ],
+        }
     else:
+        record_decision(
+            trace, "no_match", outcome.get("candidates", [])
+        )
         if outcome["reason"] in {"timeout", "error"}:
             record_failure(
                 trace,
@@ -78,6 +106,7 @@ def handle_query(query_text):
         log(f"Query returned NO_MATCH: {outcome['reason']}")
         return {
             "found": False,
+            "action": "no_match",
             "reason": outcome["reason"],
             "message": outcome.get("message"),
             "best_score": best_score,

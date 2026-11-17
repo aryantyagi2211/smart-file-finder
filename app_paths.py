@@ -59,7 +59,10 @@ def get_config_path(filename):
         "harness_limits.json": {
             "max_reformulations": 2,
             "timeout_seconds": 5,
-            "confidence_threshold": 0.5,
+            "confidence_threshold": 0.55,
+            "ambiguity_margin": 0.05,
+            "options_floor": 0.45,
+            "max_options": 3,
         },
     }
     if not config_path.exists() and filename in defaults:

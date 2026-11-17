@@ -136,16 +136,36 @@ def run_eval(golden_set_path=GOLDEN_SET_PATH):
         best_candidate = max(all_candidates, key=lambda candidate: candidate.score) if all_candidates else None
         best_path = normalize_path(best_candidate.path) if best_candidate else None
         best_score = best_candidate.score if best_candidate else 0.0
-        actual_path = normalize_path(outcome["path"]) if outcome.get("found") else None
-        hit = (
-            actual_path.casefold() in acceptable_paths
-            if acceptable_paths else not outcome.get("found")
+        options = outcome.get("options", [])
+        returned_paths = (
+            [normalize_path(option["path"]) for option in options]
+            if outcome.get("action") == "options"
+            else ([normalize_path(outcome["path"])] if outcome.get("found") else [])
+        )
+        top1_path = returned_paths[0] if returned_paths else None
+        top1_hit = (
+            top1_path.casefold() in acceptable_paths
+            if acceptable_paths else not returned_paths
+        )
+        shown_hit = (
+            bool(acceptable_paths & {path.casefold() for path in returned_paths})
+            if acceptable_paths else not returned_paths
         )
         expected = (
             " | ".join(sorted(Path(path).name for path in acceptable_paths))
             if acceptable_paths else "NO_MATCH"
         )
-        actual = actual_path or f"NO_MATCH ({outcome.get('reason')})"
+        actual = (
+            " | ".join(
+                f"{Path(option['path']).name} ({option['score']:.3f})"
+                for option in options
+            )
+            if outcome.get("action") == "options"
+            else (
+                returned_paths[0]
+                if returned_paths else f"NO_MATCH ({outcome.get('reason')})"
+            )
+        )
         in_top3 = (
             bool(acceptable_paths & {path.casefold() for path in top3_paths})
             if acceptable_paths else None
@@ -155,7 +175,11 @@ def run_eval(golden_set_path=GOLDEN_SET_PATH):
             "query": query,
             "expected": expected,
             "actual": actual,
-            "hit": hit,
+            "hit": top1_hit,
+            "top1_hit": top1_hit,
+            "shown_hit": shown_hit,
+            "action": outcome.get("action", "no_match"),
+            "options": options,
             "score": best_score,
             "acceptable_paths": acceptable_paths,
             "best_path": best_path,
@@ -164,12 +188,27 @@ def run_eval(golden_set_path=GOLDEN_SET_PATH):
             "in_top3": in_top3,
         })
 
-        status = "PASS" if hit else "FAIL"
-        print(f"[{status}] {query} | {expected} | {actual} | {best_score:.3f} | {in_top3 if in_top3 is not None else 'N/A'}")
+        status = "PASS" if top1_hit else "FAIL"
+        print(
+            f"[{status}] {query} | {expected} | {actual} | "
+            f"{best_score:.3f} | {in_top3 if in_top3 is not None else 'N/A'} "
+            f"| top1={top1_hit} shown={shown_hit} action={outcome.get('action')}"
+        )
 
     hit_count = sum(r["hit"] for r in results)
     hit_rate = hit_count / len(results)
     print(f"Hit rate: {hit_rate:.0%} ({hit_count}/{len(results)})")
+    shown_hit_count = sum(row["shown_hit"] for row in results)
+    print(f"Shown hit rate: {shown_hit_count / len(results):.0%} ({shown_hit_count}/{len(results)})")
+    options_count = sum(row["action"] == "options" for row in results)
+    print(f"OPTIONS cases: {options_count}")
+    no_match_options = [
+        row for row in results
+        if row["action"] == "options" and not row["acceptable_paths"]
+    ]
+    for row in no_match_options:
+        scores = ", ".join(f"{option['score']:.3f}" for option in row["options"])
+        print(f"NO_MATCH query shown as OPTIONS: {row['query']} | scores: {scores}")
     sweep = _run_threshold_sweep(results)
     _print_threshold_sweep(sweep)
     _append_report(results, hit_rate, sweep)
@@ -196,13 +235,35 @@ def _append_report(results, hit_rate, sweep):
     with open(REPORT_PATH, "a", encoding="utf-8") as report:
         report.write(f"\n## Evaluation — {timestamp}\n\n")
         report.write(f"Hit rate: **{hit_rate:.0%} ({sum(row['hit'] for row in results)}/{len(results)})**\n\n")
-        report.write("| Result | Query | Expected | Returned | Best score | Expected in top 3 |\n")
-        report.write("|---|---|---|---|---:|:---:|\n")
+        shown_hits = sum(row["shown_hit"] for row in results)
+        report.write(
+            f"Shown hit rate: **{shown_hits / len(results):.0%} "
+            f"({shown_hits}/{len(results)})**\n\n"
+        )
+        options_rows = [row for row in results if row["action"] == "options"]
+        report.write(f"OPTIONS cases: **{len(options_rows)}**\n\n")
+        no_match_options = [
+            row for row in options_rows if not row["acceptable_paths"]
+        ]
+        if no_match_options:
+            report.write("NO_MATCH queries shown as OPTIONS:\n\n")
+            for row in no_match_options:
+                scores = ", ".join(
+                    f"{option['score']:.3f}" for option in row["options"]
+                )
+                report.write(f"- {row['query']} — scores: {scores}\n")
+            report.write("\n")
+        report.write(
+            "| Result | Query | Expected | Returned | Best score | Expected in top 3 "
+            "| Top-1 hit | Shown hit |\n"
+        )
+        report.write("|---|---|---|---|---:|:---:|:---:|:---:|\n")
         for row in results:
             report.write(
                 f"| {'PASS' if row['hit'] else 'FAIL'} | {row['query']} "
                 f"| {row['expected']} | {row['actual']} | {row['score']:.3f} "
-                f"| {row['in_top3'] if row['in_top3'] is not None else 'N/A'} |\n"
+                f"| {row['in_top3'] if row['in_top3'] is not None else 'N/A'} "
+                f"| {row['top1_hit']} | {row['shown_hit']} |\n"
             )
         report.write("\nThreshold sweep (top candidate score cutoff):\n\n")
         report.write("| Threshold | Match hit rate | No-match false-positive rate | Top-1 accuracy | Top-3 accuracy |\n")

@@ -40,11 +40,24 @@ def record_attempt(trace, query_used, candidates, confident, best_score,
         "query_used": query_used,
         "num_candidates": len(candidates),
         "top_candidate_paths": [c.path for c in candidates[:3]],
+        "candidate_scores": [
+            {"path": c.path, "score": float(c.score)}
+            for c in candidates[:3]
+        ],
         "confident": confident,
         "best_score": best_score,
         "reformulated_query": reformulated_query,
         "strategy": strategy,
     })
+
+
+def record_decision(trace, decision, candidates):
+    """Record the final confidence decision and its ranked file scores."""
+    trace["decision"] = decision
+    trace["decision_files"] = [
+        {"path": candidate.path, "score": float(candidate.score)}
+        for candidate in candidates
+    ]
 
 
 def record_failure(trace, query_used, stage, reason):

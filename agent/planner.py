@@ -15,6 +15,7 @@ config/harness_limits.json, which expects higher-is-better similarity.
 
 from dataclasses import dataclass
 
+from agent.candidate_utils import group_candidates_by_file
 from indexing.embedder import embed_text
 from storage.vector_db.vector_store import query as vector_query
 
@@ -31,7 +32,7 @@ def distance_to_score(distance):
     return 1 / (1 + distance)
 
 
-def retrieve(query_text, n_results=5):
+def retrieve(query_text, n_results=20):
     """
     Embed query_text and search the vector store, returning a list of
     Candidate objects sorted best-first (highest score first).
@@ -52,6 +53,4 @@ def retrieve(query_text, n_results=5):
             metadata=metadata
         ))
 
-    # already sorted best-first by ChromaDB (ascending distance), but be explicit
-    candidates.sort(key=lambda c: c.score, reverse=True)
-    return candidates
+    return group_candidates_by_file(candidates)
