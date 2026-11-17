@@ -158,13 +158,15 @@ first attempt comes back too weak or too narrow.
 ### Option 1 — Windows installer (recommended)
 
 Download and run `SmartFileFinderSetup.exe` from the latest release. This
-installs the app, creates a Start Menu entry, and (optionally) sets it to
-start automatically on login.
+installs the app and creates a Start Menu entry. The installer offers an
+optional **Start Smart File Finder when Windows starts** checkbox; it is
+off by default. To disable auto-start later, delete the Smart File Finder
+shortcut from `shell:startup` or disable it in **Task Manager → Startup apps**.
 
 > **Note:** since this build isn't code-signed, Windows may flag the
-> installer's Startup entry as "disabled" the first time — if the app
-> doesn't auto-start after a restart, open **Task Manager → Startup apps**
-> and enable "SmartFileFinder" manually. This is a one-time step.
+> Startup entry as "disabled" if you opted in — if the app doesn't auto-start
+> after a restart, open **Task Manager → Startup apps** and enable
+> "SmartFileFinder" manually. This is a one-time step.
 
 ### Option 2 — Run from source
 
@@ -220,7 +222,7 @@ installer/      Windows installer script (Inno Setup)
 - Image indexing is meaningfully slower than text indexing, since it
   runs a real vision-language model per image; this only happens once
   per image, not on every search.
-- Windows may disable the app's auto-start entry for unsigned
+- Windows may disable the optional auto-start entry for unsigned
   executables — see the installation note above.
 
 ## License
