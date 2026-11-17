@@ -20,9 +20,10 @@
 Status: **Done** — unit and integration tests, the golden-set evaluation, three CLI checks, and an offscreen pick-list interaction check have passed.
 
 - Confident searches return one file without a confirmation popup.
-- Uncertain searches show up to three separate popup cards with ranks, scores, explanations, folder paths, and Open / Show actions. With three options, rank 1 is centered and ranks 2 and 3 flank it.
+- Uncertain searches show a vertical left-side stack of 1-3 independently movable popup cards, filtered by relevance, with ranks, scores, explanations, folder paths, and Open / Show actions.
 - Queries below the options floor return NO_MATCH.
 - Decision thresholds: confidence `0.55`, ambiguity margin `0.07`, options floor `0.48`, maximum options `3`.
+- Additional popup cards require a score of at least `0.50` and must be within `0.03` of the best score.
 - `/open` does not automatically open an uncertain result.
 
 ## Open work
@@ -35,4 +36,4 @@ Status: **Done** — unit and integration tests, the golden-set evaluation, thre
 
 ## Current status
 
-Feature 1 is implemented and validated with confidence threshold `0.55`, ambiguity margin `0.07`, options floor `0.48`, and maximum options `3`. Uncertain results use separate coordinated popup cards; the full desktop UI has not yet been visually verified interactively.
+Feature 1 is implemented and validated with confidence threshold `0.55`, ambiguity margin `0.07`, options floor `0.48`, maximum options `3`, minimum additional-card score `0.50`, and option score window `0.03`. Uncertain results use an independently movable vertical stack of 1-3 cards on the left; the full desktop UI has not yet been visually verified interactively.

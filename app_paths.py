@@ -62,6 +62,8 @@ def get_config_path(filename):
             "confidence_threshold": 0.55,
             "ambiguity_margin": 0.07,
             "options_floor": 0.48,
+            "min_option_score": 0.50,
+            "option_score_window": 0.03,
             "max_options": 3,
         },
     }

@@ -1,7 +1,10 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from agent.candidate_utils import group_candidates_by_file
+from agent.candidate_utils import (
+    group_candidates_by_file,
+    select_options_by_score,
+)
 from agent.harness import AgentAction, decide_candidates, run_query
 from app.command_parser import Command, should_auto_open
 from PyQt6.QtCore import Qt
@@ -49,6 +52,21 @@ def test_same_filename_in_different_folders_is_kept_as_two_files():
         r"C:\Users\me\Downloads\captureit.png",
         r"D:\project\test_data\captureit.png",
     }
+
+
+def test_option_filter_returns_one_two_or_three_cards_and_caps_at_three():
+    options = [
+        {"path": f"{rank}.txt", "score": score}
+        for rank, score in enumerate([0.70, 0.68, 0.66, 0.65, 0.61])
+    ]
+
+    assert len(select_options_by_score(options, 0.64, 0.05)) == 3
+    assert len(select_options_by_score(options[:3], 0.67, 0.05)) == 2
+    assert len(select_options_by_score(options[:3], 0.69, 0.05)) == 1
+    assert [
+        option["path"]
+        for option in select_options_by_score(options, 0.64, 0.05)
+    ] == ["0.txt", "1.txt", "2.txt"]
 
 
 def test_decision_is_confident_when_threshold_and_margin_pass():
@@ -140,7 +158,7 @@ def test_open_command_does_not_auto_open_options():
     assert should_auto_open(Command.FIND, "answer") is False
 
 
-def _popup_group(tmp_path, count=3):
+def _popup_group(tmp_path, count=3, file_names=None):
     from app.result_card import OptionsPopupGroup
 
     from PyQt6.QtWidgets import QWidget
@@ -149,11 +167,16 @@ def _popup_group(tmp_path, count=3):
     anchor.show()
     options = []
     for rank in range(count):
-        path = tmp_path / f"option-{rank + 1}.txt"
+        filename = (
+            file_names[rank]
+            if file_names is not None
+            else f"option-{rank + 1}.txt"
+        )
+        path = tmp_path / filename
         path.write_text(f"option {rank + 1}", encoding="utf-8")
         options.append({
             "path": str(path),
-            "score": 0.7 - rank * 0.05,
+            "score": 0.70 - rank * 0.01,
             "explanation": f"Explanation for option {rank + 1}",
         })
     return OptionsPopupGroup(options, anchor=anchor), anchor
@@ -172,7 +195,7 @@ def test_three_popup_cards_are_ranked_and_fit_screen(tmp_path, monkeypatch):
 
     assert len(group.cards) == 3
     by_rank = {card.rank: card for card in group.cards}
-    assert by_rank[2].x() < by_rank[1].x() < by_rank[3].x()
+    assert by_rank[1].y() < by_rank[2].y() < by_rank[3].y()
     screen = anchor.screen().availableGeometry()
     for card in group.cards:
         rect = card.frameGeometry()
@@ -180,6 +203,11 @@ def test_three_popup_cards_are_ranked_and_fit_screen(tmp_path, monkeypatch):
         assert screen.top() <= rect.top()
         assert rect.right() <= screen.right()
         assert rect.bottom() <= screen.bottom()
+    assert (
+        len(group.cards) * group.CARD_HEIGHT
+        + (len(group.cards) - 1) * group.GAP
+        <= 768
+    )
     group.close()
     anchor.close()
 
@@ -192,7 +220,7 @@ def test_two_popup_cards_put_best_on_left(tmp_path, monkeypatch):
 
     by_rank = {card.rank: card for card in group.cards}
     assert len(group.cards) == 2
-    assert by_rank[1].x() < by_rank[2].x()
+    assert by_rank[1].y() < by_rank[2].y()
     screen = anchor.screen().availableGeometry()
     for card in group.cards:
         rect = card.frameGeometry()
@@ -215,6 +243,8 @@ def test_open_choice_closes_group_and_emits_once(tmp_path, monkeypatch):
     app.processEvents()
 
     rank_two = next(card for card in group.cards if card.rank == 2)
+    assert rank_two.open_button.isVisible()
+    assert rank_two.show_button.isVisible()
     rank_two.open_button.click()
 
     assert opened == [("open", str(Path(tmp_path / "option-2.txt").resolve()), True)]
@@ -255,7 +285,7 @@ def test_escape_closes_all_popup_cards(tmp_path, monkeypatch):
     anchor.close()
 
 
-def test_close_button_closes_all_popup_cards(tmp_path, monkeypatch):
+def test_close_button_closes_only_its_card(tmp_path, monkeypatch):
     app = _qt_app(monkeypatch)
     group, anchor = _popup_group(tmp_path)
     group.show()
@@ -264,7 +294,11 @@ def test_close_button_closes_all_popup_cards(tmp_path, monkeypatch):
     group.cards[-1].close_button.click()
     app.processEvents()
 
-    assert all(not card.isVisible() for card in group.cards)
+    by_rank = {card.rank: card for card in group.cards}
+    assert not by_rank[3].isVisible()
+    assert by_rank[1].isVisible()
+    assert by_rank[2].isVisible()
+    group.close()
     anchor.close()
 
 
@@ -293,5 +327,85 @@ def test_popup_card_labels_have_no_outlined_boxes(tmp_path, monkeypatch):
     for card in group.cards:
         for label in card.findChildren(QLabel):
             assert "border:" not in label.styleSheet().casefold()
+    group.close()
+    anchor.close()
+
+
+def test_popup_card_render_has_opaque_dark_background(tmp_path, monkeypatch):
+    app = _qt_app(monkeypatch)
+    group, anchor = _popup_group(tmp_path, count=1)
+    assert group.cards[0].header_title.text() == "Not sure - is this it?"
+    group.show()
+    app.processEvents()
+
+    image = group.cards[0].grab().toImage()
+    center = image.pixelColor(image.width() // 2, image.height() // 2)
+    assert center.alpha() == 255
+    assert (center.red(), center.green(), center.blue()) == (18, 19, 24)
+    group.close()
+    anchor.close()
+
+
+def test_confident_result_card_render_has_opaque_dark_background(
+    tmp_path, monkeypatch
+):
+    from app.result_card import ResultCard
+
+    app = _qt_app(monkeypatch)
+    path = tmp_path / "confident.txt"
+    path.write_text("text", encoding="utf-8")
+    card = ResultCard(str(path), 0.9, "A confident result")
+    card.show()
+    app.processEvents()
+
+    image = card.grab().toImage()
+    background = image.pixelColor(image.width() - 10, image.height() // 2)
+    assert background.alpha() == 255
+    assert (
+        background.red(), background.green(), background.blue()
+    ) == (18, 19, 24)
+    card.close()
+
+
+def test_popup_card_can_be_dragged_and_is_clamped_to_screen(
+    tmp_path, monkeypatch
+):
+    from PyQt6.QtCore import QPoint
+
+    app = _qt_app(monkeypatch)
+    group, anchor = _popup_group(tmp_path, count=1)
+    group.show()
+    app.processEvents()
+    card = group.cards[0]
+    original = card.pos()
+
+    QTest.mousePress(card, Qt.MouseButton.LeftButton, pos=QPoint(40, 40))
+    QTest.mouseMove(card, QPoint(120, 100), delay=20)
+    QTest.mouseRelease(card, Qt.MouseButton.LeftButton, pos=QPoint(120, 100))
+    app.processEvents()
+
+    screen = card.screen().availableGeometry()
+    assert card.pos() != original
+    assert screen.left() <= card.x() <= screen.right() - card.width() + 1
+    assert screen.top() <= card.y() <= screen.bottom() - card.height() + 1
+    group.close()
+    anchor.close()
+
+
+def test_filename_middle_elision_preserves_extension(tmp_path, monkeypatch):
+    app = _qt_app(monkeypatch)
+    full_name = "captureit_12-11-2026_at_22-37-18.png"
+    group, anchor = _popup_group(
+        tmp_path, count=1, file_names=[full_name]
+    )
+    card = group.cards[0]
+    rendered = card.filename_label.text()
+
+    assert rendered.endswith(".png")
+    assert "…" in rendered
+    assert card.filename_label.toolTip() == full_name
+    assert card.filename_label.fontMetrics().horizontalAdvance(rendered) <= (
+        card.filename_label.width()
+    )
     group.close()
     anchor.close()

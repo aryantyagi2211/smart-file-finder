@@ -383,3 +383,47 @@ Threshold sweep (top candidate score cutoff):
 | 0.60 | 44% | 0% | 55% | 55% |
 | 0.65 | 31% | 0% | 45% | 45% |
 | 0.70 | 31% | 0% | 45% | 45% |
+
+## Popup relevance filter — 2026-11-17
+
+The options decision (ANSWER / OPTIONS / NO_MATCH) and its thresholds were
+not changed. This sweep applies only to extra cards after the best OPTIONS
+candidate has already been selected. The best candidate is always retained;
+an additional candidate is shown only when its score meets
+`min_option_score` and is no more than `option_score_window` below the best.
+Each cell below is `shown-hit cases / 20; total cards` across the nine OPTIONS
+cases in the saved 16:39 golden-set capture. The grid was computed from that
+single fixed capture, not by rerunning retrieval for each pair.
+
+| Minimum option score \ Score window | 0.03 | 0.04 | 0.05 | 0.06 | 0.07 | 0.08 | 0.09 | 0.10 |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0.40 | 18/20; 12 | 18/20; 12 | 19/20; 14 | 19/20; 18 | 19/20; 20 | 19/20; 21 | 19/20; 24 | 19/20; 24 |
+| 0.42 | 18/20; 12 | 18/20; 12 | 19/20; 14 | 19/20; 18 | 19/20; 20 | 19/20; 20 | 19/20; 22 | 19/20; 22 |
+| 0.44 | 18/20; 12 | 18/20; 12 | 19/20; 14 | 19/20; 18 | 19/20; 20 | 19/20; 20 | 19/20; 22 | 19/20; 22 |
+| 0.46 | 18/20; 12 | 18/20; 12 | 18/20; 13 | 18/20; 15 | 18/20; 17 | 18/20; 17 | 18/20; 18 | 18/20; 18 |
+| 0.48 | 18/20; 11 | 18/20; 11 | 18/20; 12 | 18/20; 14 | 18/20; 15 | 18/20; 15 | 18/20; 16 | 18/20; 16 |
+| 0.50 | 18/20; 11 | 18/20; 11 | 18/20; 11 | 18/20; 13 | 18/20; 14 | 18/20; 14 | 18/20; 15 | 18/20; 15 |
+
+Recommendation: **`min_option_score = 0.50`, `option_score_window = 0.03`**.
+The task permits losing at most one case from the saved 95% shown-hit result.
+This pair yields 18/20 (90%, one case lower) with the fewest cards in the grid:
+11 total, or 1.22 per OPTIONS case. Preserving all 19/20 shown hits instead
+requires at least 14 cards (1.56 per OPTIONS case) in the tested grid. The
+grid's counts include no-match false displays when they pass the same filter;
+the score floor does not eliminate all such false positives.
+
+### Golden-set before / after
+
+| Capture / filter | Top-1 | Shown hit | OPTIONS cases | Average cards per OPTIONS case | No-match queries showing cards |
+|---|---:|---:|---:|---:|---|
+| Saved 16:39 run, before filter | 18/20 (90%) | 19/20 (95%) | 9 | 2.67 | Medieval castle architecture (0.540, 0.459) |
+| Same saved scores, `0.50 / 0.03` simulation | 18/20 (90%) | 18/20 (90%) | 9 | 1.22 | Medieval castle architecture (0.540) |
+| Fresh run in this update, before filter | 14/20 (70%) | 15/20 (75%) | 10 | 2.70 | Medieval castle architecture |
+| Same fresh run, `0.50 / 0.03` filter | 14/20 (70%) | 15/20 (75%) | 10 | 1.30 | Medieval castle architecture (0.540) |
+
+The fresh run's retrieval results differ from the saved 16:39 capture, so the
+saved-score simulation and the fresh-run result are reported separately rather
+than presented as a like-for-like rerun. In both, the unrelated castle query
+still produces a card at score 0.540. Twenty cases (including only four
+no-match queries) are too few to establish robust thresholds; a larger set
+and repeated runs are needed.
