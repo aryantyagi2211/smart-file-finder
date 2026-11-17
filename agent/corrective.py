@@ -1,7 +1,7 @@
 """
 agent/corrective.py
 
-Confidence check + reformulation logic, per skills/corrective-rag-retry/.
+Confidence checking and fast, rule-based query reformulation.
 confidence_threshold is always read from config/harness_limits.json --
 never hardcoded here, to stay in sync with agent/harness.py's limits.
 
@@ -10,24 +10,27 @@ Two distinct reformulation strategies (per the skill file, not conflated):
     specific terms, keep general intent. Fully implemented (pure text
     manipulation, no model needed).
   - refine_query(): candidates exist but confidence is low -> query too
-    vague/mismatched -> ideally uses a reasoning model to suggest better
-    terms based on the gap between query and near-misses. NO real
-    reasoning model exists yet (that's Phase 3, Qwen3-1.7B/4B on NPU --
-    see CLAUDE.md). For now this is a clearly-marked PLACEHOLDER using a
-    naive heuristic, matching the same "mock now, swap in Phase 3" pattern
-    CLAUDE.md already uses for vision_pipeline.py.
+    vague/mismatched -> retain content terms and add distinctive candidate
+    terms with simple local rules. No model calls are made.
 """
 
 from dataclasses import dataclass
 import json
+import re
 
 # Words too generic to carry search meaning on their own -- stripped
 # during broadening so the reformulated query keeps only distinctive terms.
 STOPWORDS = {
     "the", "a", "an", "that", "this", "with", "and", "or", "of", "in",
     "on", "for", "to", "is", "are", "was", "were", "find", "show", "me",
-    "my", "file", "document", "photo", "picture", "image"
+    "my", "file", "files", "document", "documents", "photo", "picture",
+    "image", "which", "about", "talk", "talks", "tell", "give", "get",
+    "please", "search", "look", "looking", "want", "need", "where", "what",
+    "who", "when", "how", "can", "could", "would", "do", "does", "did",
+    "from", "as", "by", "at", "into", "any", "some", "all", "thing",
+    "things", "stuff", "something", "anything"
 }
+_WORD_PATTERN = re.compile(r"[a-z0-9]+(?:['-][a-z0-9]+)*", re.IGNORECASE)
 
 
 @dataclass
@@ -35,6 +38,7 @@ class CorrectiveResult:
     confident: bool
     best_score: float
     reformulated_query: str = None
+    strategy: str = None
 
 
 from app_paths import get_config_path
@@ -60,15 +64,53 @@ def broaden_query(query):
 
 
 def refine_query(query, candidates):
-    """
-    PLACEHOLDER refinement strategy. Real refinement needs a reasoning
-    model to look at near-miss candidates and suggest better terms (see
-    module docstring) -- that model doesn't exist in this project yet.
-    For now: re-run the same query unchanged. This is intentionally a
-    no-op stand-in, not a real strategy, so it's obvious this needs
-    revisiting once agent/reasoner.py + a real reasoning model exist.
-    """
-    return query
+    """Keep query content words and add distinctive terms from near misses."""
+    query_words = [
+        word.lower()
+        for word in _WORD_PATTERN.findall(query)
+        if word.lower() not in STOPWORDS
+    ]
+    query_terms = set(query_words)
+    refined_words = list(dict.fromkeys(query_words))
+    added_terms = set()
+
+    top_candidates = sorted(
+        candidates, key=lambda candidate: candidate.score, reverse=True
+    )[:3]
+    for candidate in top_candidates:
+        filename = candidate.path.replace("\\", "/").rsplit("/", 1)[-1]
+        filename = re.sub(r"\.[^.]+$", "", filename)
+        preview = (
+            candidate.metadata.get("chunk_text")
+            or candidate.metadata.get("description")
+            or ""
+        )
+        candidate_terms = 0
+        for source in (filename, preview):
+            for word in _WORD_PATTERN.findall(source):
+                term = word.lower()
+                if term in STOPWORDS or term in query_terms or term in added_terms:
+                    continue
+                if len(term) < 3:
+                    continue
+                added_terms.add(term)
+                refined_words.append(term)
+                candidate_terms += 1
+                if candidate_terms >= 2 or len(added_terms) >= 4:
+                    break
+            if candidate_terms >= 2 or len(added_terms) >= 4:
+                break
+        if len(added_terms) >= 4:
+            break
+
+    refined_query = " ".join(refined_words[:12])
+    if not refined_query or _normalize_query(refined_query) == _normalize_query(query):
+        return None
+    return refined_query
+
+
+def _normalize_query(query):
+    return " ".join(_WORD_PATTERN.findall(query.lower()))
 
 
 def check_results(candidates, original_query, config_path=None):
@@ -78,7 +120,8 @@ def check_results(candidates, original_query, config_path=None):
         return CorrectiveResult(
             confident=False,
             best_score=0.0,
-            reformulated_query=broaden_query(original_query)
+            reformulated_query=broaden_query(original_query),
+            strategy="broaden"
         )
 
     best = max(candidates, key=lambda c: c.score)
@@ -91,13 +134,16 @@ def check_results(candidates, original_query, config_path=None):
     # ChromaDB always returns n_results candidates regardless of quality
     # -- candidate count alone can't signal "no good matches".
     BROADEN_SCORE_FLOOR = 0.45
-    if best.score < BROADEN_SCORE_FLOOR:
+    if len(candidates) <= 1 or best.score < BROADEN_SCORE_FLOOR:
         reformulated = broaden_query(original_query)
+        strategy = "broaden"
     else:
         reformulated = refine_query(original_query, candidates)
+        strategy = "refine"
 
     return CorrectiveResult(
         confident=False,
         best_score=best.score,
-        reformulated_query=reformulated
+        reformulated_query=reformulated,
+        strategy=strategy
     )

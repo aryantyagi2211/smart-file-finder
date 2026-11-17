@@ -59,9 +59,18 @@ def test_reformulates_then_succeeds(tmp_path):
 
 def test_exhausts_reformulations_returns_no_match(tmp_path):
     config_path = _write_limits(tmp_path, max_reformulations=2, timeout=5)
+    queries = []
 
-    retriever = lambda q: []
-    corrective_check = lambda candidates, q: FakeCorrectiveResult(confident=False, reformulated_query="try again")
+    def retriever(query):
+        queries.append(query)
+        return []
+
+    def corrective_check(candidates, query):
+        return FakeCorrectiveResult(
+            confident=False,
+            reformulated_query=f"try again {len(queries)}",
+        )
+
     reasoner = lambda candidates, q: None
     explainer = lambda best, q: None
 
@@ -70,6 +79,31 @@ def test_exhausts_reformulations_returns_no_match(tmp_path):
 
     assert result["action"] == AgentAction.NO_MATCH
     assert "retries" in result["reason"]
+    assert len(queries) == 3
+
+
+def test_identical_reformulation_stops_early(tmp_path):
+    config_path = _write_limits(tmp_path, max_reformulations=5, timeout=1)
+    calls = []
+
+    def retriever(query):
+        calls.append(query)
+        return []
+
+    result = run_query(
+        "same query",
+        retriever,
+        lambda candidates, query: FakeCorrectiveResult(
+            confident=False, reformulated_query="SAME   query"
+        ),
+        lambda candidates, query: None,
+        lambda best, query: None,
+        config_path=config_path,
+    )
+
+    assert result["action"] == AgentAction.NO_MATCH
+    assert result["reason"] == "no new query from reformulate"
+    assert calls == ["same query"]
 
 
 def test_timeout_returns_no_match(tmp_path):

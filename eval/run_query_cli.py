@@ -40,7 +40,10 @@ def main():
 
     def corrective_check(candidates, q):
         result = check_results(candidates, q)
-        record_attempt(trace, q, candidates, result.confident, result.best_score, result.reformulated_query)
+        record_attempt(
+            trace, q, candidates, result.confident, result.best_score,
+            result.reformulated_query, result.strategy
+        )
         return result
 
     def reasoner(candidates, q):

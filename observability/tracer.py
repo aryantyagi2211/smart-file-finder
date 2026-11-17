@@ -33,7 +33,8 @@ def start_trace(query):
     }
 
 
-def record_attempt(trace, query_used, candidates, confident, best_score, reformulated_query=None):
+def record_attempt(trace, query_used, candidates, confident, best_score,
+                   reformulated_query=None, strategy=None):
     """Append one retrieval attempt's details to the trace."""
     trace["attempts"].append({
         "query_used": query_used,
@@ -41,7 +42,8 @@ def record_attempt(trace, query_used, candidates, confident, best_score, reformu
         "top_candidate_paths": [c.path for c in candidates[:3]],
         "confident": confident,
         "best_score": best_score,
-        "reformulated_query": reformulated_query
+        "reformulated_query": reformulated_query,
+        "strategy": strategy,
     })
 
 

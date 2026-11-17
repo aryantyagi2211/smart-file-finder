@@ -17,6 +17,7 @@ Real implementations get wired in as they're built:
 
 from enum import Enum
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+import re
 import time
 import json
 from app_paths import get_config_path
@@ -89,6 +90,13 @@ def run_query(query, retriever, corrective_check, reasoner, explainer,
     deadline = start + timeout_seconds
     attempts = 0
     current_query = query
+    tried_queries = {query}
+
+    def normalized_query(value):
+        return (
+            " ".join(re.sub(r"\W+", " ", value.casefold()).split())
+            if isinstance(value, str) else None
+        )
 
     while attempts <= max_reformulations:
         try:
@@ -119,7 +127,17 @@ def run_query(query, retriever, corrective_check, reasoner, explainer,
                     "explanation": explanation,
                 }
 
-            current_query = check.reformulated_query
+            next_query = check.reformulated_query
+            tried = {normalized_query(value) for value in tried_queries}
+            normalized_next_query = normalized_query(next_query)
+            if not normalized_next_query or normalized_next_query in tried:
+                strategy = getattr(check, "strategy", None) or "reformulate"
+                return {
+                    "action": AgentAction.NO_MATCH,
+                    "reason": f"no new query from {strategy}",
+                }
+            current_query = next_query
+            tried_queries.add(current_query)
             attempts += 1
         except StepDeadlineExceeded as error:
             return _failure("timeout", error.step_name)
