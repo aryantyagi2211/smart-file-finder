@@ -15,6 +15,10 @@
 - Image understanding uses `google/gemma-4-E2B-it` (4-bit, indexing time only).
 - `Qwen/Qwen3-1.7B` is used by the indexing-time summarizer only.
 - There is no live LLM reasoning in the search path; query refinement and result decisions are rule-based.
+- The only network use is downloading public model files from Hugging Face during explicit first-run setup. No user file, query, or telemetry is ever sent. After setup the app works fully offline.
+- `config/model_tiers.json` is the model registry. Download only the loader-required files pinned to each model revision; `download_size_gb` is that selected payload, while `repository_size_gb` records the full repository size.
+- Models are stored under the app data folder's `models` directory. Resolve models with `app_paths.find_model`; enable Hugging Face offline mode only after required models are local.
+- If CUDA is unavailable or the selected tier has no configured vision model, index images by filename only. Do not load the vision model; log and show the filename-only notice.
 - Confidence threshold: `0.55`; ambiguity margin: `0.07`; options floor: `0.48`; maximum options: `3`.
 
 ## Update round (Nov 2026)
@@ -36,6 +40,7 @@ Feature 1 (top-three pick list) is implemented: confident queries return one fil
 Planned work:
 
 - Device tiers keep embeddings fixed at `all-mpnet-base-v2` for every tier so existing vector indexes remain compatible. Tiers are only for future vision, voice, and optional summarizer choices.
-- First-guess auto-tier minimums: big = 24 GB RAM, 12 GB NVIDIA VRAM, 20 GB free disk; mid = 12 GB RAM, 4 GB NVIDIA VRAM, 8 GB free disk; small is the fallback.
+- Auto-tier minimums: big = 24 GB RAM, 12 GB NVIDIA VRAM, 1 GB free disk; mid = 12 GB RAM, 4 GB NVIDIA VRAM, 17 GB free disk; small is the fallback with 1 GB free disk.
+- The disk minimums are the rounded-up 1.5x size of the models currently assigned to each tier. Embeddings remain `all-mpnet-base-v2` for every tier.
 - Feature 2: device tiers with one installer, first-run hardware detection, and model packs.
 - Feature 3: voice search, English-only initially, using local Whisper.

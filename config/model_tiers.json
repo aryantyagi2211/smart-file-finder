@@ -3,7 +3,7 @@
     "big": {
       "min_ram_gb": 24,
       "min_vram_gb": 12,
-      "min_free_disk_gb": 20,
+      "min_free_disk_gb": 1,
       "vision_model": "Larger vision model (to be decided later)",
       "whisper_model_size": "small/medium",
       "summarizer": "yes"
@@ -11,7 +11,7 @@
     "mid": {
       "min_ram_gb": 12,
       "min_vram_gb": 4,
-      "min_free_disk_gb": 8,
+      "min_free_disk_gb": 17,
       "vision_model": "google/gemma-4-E2B-it (4-bit)",
       "whisper_model_size": "base",
       "summarizer": "yes"
@@ -19,10 +19,81 @@
     "small": {
       "min_ram_gb": 0,
       "min_vram_gb": 0,
-      "min_free_disk_gb": 0,
+      "min_free_disk_gb": 1,
       "vision_model": "Tiny CPU-friendly option (to be decided later)",
       "whisper_model_size": "tiny",
       "summarizer": "no"
     }
-  }
+  },
+  "models": [
+      {
+        "name": "all-mpnet-base-v2",
+        "purpose": "embedding",
+        "repo_id": "sentence-transformers/all-mpnet-base-v2",
+        "revision": "e8c3b32edf5434bc2275fc9bab85f82640a19130",
+        "download_size_gb": 0.43867131,
+        "download_size_bytes": 438671310,
+        "repository_size_gb": 3.824846935,
+        "repository_size_bytes": 3824846935,
+        "repository_file_count": 28,
+        "tiers": ["small", "mid", "big"],
+        "status": "ready",
+        "files": {
+          "1_Pooling/config.json": 190,
+          "config.json": 571,
+          "config_sentence_transformers.json": 116,
+          "model.safetensors": 437971872,
+          "modules.json": 349,
+          "sentence_bert_config.json": 53,
+          "special_tokens_map.json": 239,
+          "tokenizer.json": 466021,
+          "tokenizer_config.json": 363,
+          "vocab.txt": 231536
+        }
+      },
+      {
+        "name": "Gemma 4 E2B-it",
+        "purpose": "vision",
+        "repo_id": "google/gemma-4-E2B-it",
+        "revision": "4adf15748de9e1a0097b6274cee9c15836c41c37",
+        "download_size_gb": 10.278806153,
+        "download_size_bytes": 10278806153,
+        "repository_size_gb": 10.278835678,
+        "repository_size_bytes": 10278835678,
+        "repository_file_count": 9,
+        "tiers": ["mid"],
+        "status": "ready",
+        "files": {
+          "chat_template.jinja": 18569,
+          "config.json": 4954,
+          "generation_config.json": 208,
+          "model.safetensors": 10246621918,
+          "processor_config.json": 1689,
+          "tokenizer.json": 32155733,
+          "tokenizer_config.json": 3082
+        }
+      },
+      {
+        "name": "Small-tier vision model (planned)",
+        "purpose": "vision",
+        "repo_id": null,
+        "revision": null,
+        "download_size_gb": null,
+        "download_size_bytes": null,
+        "tiers": ["small"],
+        "status": "planned",
+        "files": {}
+      },
+      {
+        "name": "Big-tier vision model (planned)",
+        "purpose": "vision",
+        "repo_id": null,
+        "revision": null,
+        "download_size_gb": null,
+        "download_size_bytes": null,
+        "tiers": ["big"],
+        "status": "planned",
+        "files": {}
+      }
+  ]
 }

@@ -81,6 +81,7 @@ class IndexingStatusWidget(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setFixedSize(320, 30)
+        self._standard_width = 320
         self._had_error = False
         self._setup_ui()
         self._position_top_right()
@@ -126,14 +127,27 @@ class IndexingStatusWidget(QWidget):
 
     def show_progress(self, folder_name, filename_short, files_done, files_total):
         """Real progress shown as a count: X/Y files in the current folder."""
+        if self.width() != self._standard_width:
+            self.setFixedSize(self._standard_width, 30)
+            self._position_top_right()
         self.status_label.setText(f"Indexing ({folder_name}): {filename_short}")
         self.percent_label.setText(f"{files_done}/{files_total}")
 
     def show_error(self, filename_short):
         """A file failed to index -- dot turns red, text shows which file."""
+        if self.width() != self._standard_width:
+            self.setFixedSize(self._standard_width, 30)
+            self._position_top_right()
         self._had_error = True
         self.dot.set_error_state(True)
         self.status_label.setText(f"Error: {filename_short}")
+
+    def show_notice(self, message):
+        """Show a non-error indexing notice such as filename-only image mode."""
+        self.setFixedSize(560, 30)
+        self._position_top_right()
+        self.status_label.setText(message)
+        self.percent_label.setText("")
 
     def mark_complete(self):
         """Called once all indexing is fully done, right before this

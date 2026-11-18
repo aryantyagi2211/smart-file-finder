@@ -66,12 +66,12 @@ def test_arm64_without_cuda_selects_small_and_notes_unimplemented_npu(
 
 def test_low_disk_steps_down_one_tier_and_reports_reason():
     tier, reason = hardware_profile.choose_tier(
-        _profile(32, 16, free_disk_gb=10, gpu_name="NVIDIA RTX")
+        _profile(32, 16, free_disk_gb=0.5, gpu_name="NVIDIA RTX")
     )
 
     assert tier == "mid"
     assert "stepped down to mid" in reason
-    assert "20 GB minimum" in reason
+    assert "1 GB minimum" in reason
 
 
 def test_valid_override_wins_even_below_hardware_minimums(monkeypatch):

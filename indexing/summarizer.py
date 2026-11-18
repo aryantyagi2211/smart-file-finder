@@ -28,9 +28,14 @@ def get_model_and_tokenizer():
     global _model, _tokenizer
     if _model is None:
         quant_config = BitsAndBytesConfig(load_in_4bit=True)
-        _tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+        _tokenizer = AutoTokenizer.from_pretrained(
+            MODEL_NAME, local_files_only=True
+        )
         _model = AutoModelForCausalLM.from_pretrained(
-            MODEL_NAME, quantization_config=quant_config, device_map="cuda"
+            MODEL_NAME,
+            quantization_config=quant_config,
+            device_map="cuda",
+            local_files_only=True,
         )
     return _model, _tokenizer
 

@@ -14,6 +14,9 @@ import threading
 import os
 import json
 
+os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
+os.environ["HF_HUB_DISABLE_XET"] = "1"
+
 if __name__ == "__main__":
     from app.instance_lock import acquire_single_instance_lock
 
@@ -52,6 +55,11 @@ from app.hardware_profile import (
     get_performance_tier_override,
     set_current_tier,
 )
+from app.setup_window import SetupWindow
+from indexing.model_downloader import (
+    missing_models_for_tier,
+    set_huggingface_offline,
+)
 
 
 from PyQt6.QtWidgets import QSystemTrayIcon, QMenu
@@ -75,10 +83,11 @@ class ProgressBridge(QObject):
     progress_updated = pyqtSignal(str, str, int, int)
     error_occurred = pyqtSignal(str)
     model_loading = pyqtSignal()
+    notice = pyqtSignal(str)
 
 
 class HardwareTierBridge(QObject):
-    ready = pyqtSignal(str, str)
+    ready = pyqtSignal(str, str, object)
 
 
 class LiveIndexHandler(FileSystemEventHandler):
@@ -151,12 +160,15 @@ class SmartFileFinderApp:
         self.indexing_done_bridge.finished.connect(self._on_indexing_finished)
 
         self.status_window = IndexingStatusWidget()
-        self.status_window.show()
 
         self.progress_bridge = ProgressBridge()
         self.progress_bridge.progress_updated.connect(self.status_window.show_progress)
         self.progress_bridge.error_occurred.connect(self.status_window.show_error)
         self.progress_bridge.model_loading.connect(self.status_window.show_loading_model)
+        self.progress_bridge.notice.connect(self.status_window.show_notice)
+
+        self.setup_window = None
+        self._normal_startup_started = False
 
         self.hardware_tier_bridge = HardwareTierBridge()
         self.hardware_tier_bridge.ready.connect(self._on_hardware_tier_ready)
@@ -166,15 +178,6 @@ class SmartFileFinderApp:
             name="hardware-profile",
         )
         self._hardware_detection_thread.start()
-
-        self._embedding_warmup_thread = threading.Thread(
-            target=self._preload_embedding_model,
-            daemon=True,
-        )
-        self._embedding_warmup_thread.start()
-
-        self._indexing_thread = threading.Thread(target=self._run_initial_backfill, daemon=True)
-        self._indexing_thread.start()
 
     @staticmethod
     def _preload_embedding_model():
@@ -221,14 +224,55 @@ class SmartFileFinderApp:
             or normalized_override not in ("small", "mid", "big")
             else "override"
         )
-        self.hardware_tier_bridge.ready.emit(tier, mode)
+        self.hardware_tier_bridge.ready.emit(
+            tier, mode, profile.get("free_disk_gb")
+        )
 
-    def _on_hardware_tier_ready(self, tier, mode):
+    def _on_hardware_tier_ready(self, tier, mode, free_disk_gb):
         set_current_tier(tier)
         display_tier = tier.capitalize()
         self.performance_tier_action.setText(
             f"Performance tier: {display_tier} ({mode})"
         )
+        try:
+            missing = missing_models_for_tier(tier)
+        except Exception as error:
+            log(f"Model registry check failed: {error}")
+            QMessageBox.critical(
+                None,
+                "Model setup error",
+                f"Could not check the required local models: {error}",
+            )
+            self.app.quit()
+            return
+
+        if missing:
+            set_huggingface_offline(False)
+            self.setup_window = SetupWindow(tier, missing, free_disk_gb)
+            self.setup_window.ready.connect(self._on_models_ready)
+            self.setup_window.cancelled.connect(self.app.quit)
+            self.setup_window.show()
+            return
+
+        self._on_models_ready()
+
+    def _on_models_ready(self):
+        set_huggingface_offline(True)
+        log("All required models are local; Hugging Face offline mode enabled.")
+        if self._normal_startup_started:
+            return
+        self._normal_startup_started = True
+        self.status_window.show()
+        self._embedding_warmup_thread = threading.Thread(
+            target=self._preload_embedding_model,
+            daemon=True,
+        )
+        self._embedding_warmup_thread.start()
+        self._indexing_thread = threading.Thread(
+            target=self._run_initial_backfill,
+            daemon=True,
+        )
+        self._indexing_thread.start()
 
     def _run_initial_backfill(self):
         print("Indexing files, please wait...")
@@ -238,7 +282,9 @@ class SmartFileFinderApp:
             progress_callback=lambda folder, filename, done, total:
                 self.progress_bridge.progress_updated.emit(folder, filename, done, total),
             error_callback=lambda filename:
-                self.progress_bridge.error_occurred.emit(filename)
+                self.progress_bridge.error_occurred.emit(filename),
+            status_callback=lambda message:
+                self.progress_bridge.notice.emit(message),
         )
         print("Indexing complete.")
         self.indexing_done_bridge.finished.emit()

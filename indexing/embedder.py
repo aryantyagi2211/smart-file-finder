@@ -9,6 +9,9 @@ import os
 import threading
 from pathlib import Path
 
+from app_paths import find_model
+from indexing.model_downloader import set_huggingface_offline
+
 HF_HOME = os.environ.setdefault(
     "HF_HOME", str(Path.home() / ".cache" / "huggingface")
 )
@@ -18,6 +21,7 @@ from sentence_transformers import SentenceTransformer
 
 _model = None  # loaded lazily, once, on first use
 _model_lock = threading.Lock()
+MODEL_REPO_ID = "sentence-transformers/all-mpnet-base-v2"
 
 
 def get_model():
@@ -34,7 +38,17 @@ def get_model():
     if _model is None:
         with _model_lock:
             if _model is None:
-                _model = SentenceTransformer("all-mpnet-base-v2")
+                model_path = find_model(MODEL_REPO_ID)
+                if model_path is None:
+                    raise RuntimeError(
+                        "The all-mpnet-base-v2 model is not fully installed. "
+                        "Complete model setup before embedding."
+                    )
+                set_huggingface_offline(True)
+                _model = SentenceTransformer(
+                    str(model_path),
+                    local_files_only=True,
+                )
     return _model
 
 

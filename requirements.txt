@@ -14,3 +14,4 @@ python-docx
 qtawesome
 pillow
 psutil
+huggingface_hub

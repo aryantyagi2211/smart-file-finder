@@ -28,6 +28,9 @@ import torch
 from transformers import AutoModelForImageTextToText, AutoProcessor, BitsAndBytesConfig
 from PIL import Image
 
+from app.hardware_profile import get_current_tier
+from app_paths import find_model
+
 _model = None
 _processor = None
 
@@ -35,19 +38,41 @@ MODEL_NAME = "google/gemma-4-E2B-it"
 MAX_IMAGE_DIMENSION = 768
 
 
+def image_description_status():
+    """Return whether this tier can run the configured vision model."""
+    if get_current_tier() != "mid":
+        return False, "the selected tier has no configured vision model"
+    try:
+        if not torch.cuda.is_available():
+            return False, "CUDA is unavailable"
+    except Exception as error:
+        return False, f"CUDA detection failed: {error}"
+    if find_model(MODEL_NAME) is None:
+        return False, "the pinned vision model is not installed"
+    return True, ""
+
+
 def get_model_and_processor():
     """Load the vision model once and reuse it (loading is slow)."""
     global _model, _processor
     if _model is None:
+        available, reason = image_description_status()
+        if not available:
+            raise RuntimeError(f"Image descriptions are unavailable: {reason}")
+        model_path = str(find_model(MODEL_NAME))
         quant_config = BitsAndBytesConfig(load_in_4bit=True)
         _processor = AutoProcessor.from_pretrained(
-            MODEL_NAME, padding_side="left", cache_dir=HF_HUB_CACHE
+            model_path,
+            padding_side="left",
+            cache_dir=HF_HUB_CACHE,
+            local_files_only=True,
         )
         _model = AutoModelForImageTextToText.from_pretrained(
-            MODEL_NAME,
+            model_path,
             quantization_config=quant_config,
             device_map="cuda",
             cache_dir=HF_HUB_CACHE,
+            local_files_only=True,
         )
     return _model, _processor
 
@@ -58,6 +83,9 @@ def describe_image(file_path):
     Gemma 4 E2B-it. Takes roughly 15-20 seconds per call on a 4GB GPU --
     intended for one-time use at indexing time only (see module docstring).
     """
+    available, reason = image_description_status()
+    if not available:
+        raise RuntimeError(f"Image descriptions are unavailable: {reason}")
     model, processor = get_model_and_processor()
 
     image = Image.open(file_path)

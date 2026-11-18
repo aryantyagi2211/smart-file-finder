@@ -137,6 +137,46 @@ def test_changed_file_removes_old_chunks_and_indexes_new_content(
     assert metadata_store.get_chunks(file_path, db_path=db_path) == ["new_unique"]
 
 
+def test_image_without_cuda_is_indexed_by_filename_without_loading_vision_model(
+    tmp_path, isolated_index, monkeypatch
+):
+    _, collection = isolated_index
+    from indexing import vision_pipeline
+
+    image_path = tmp_path / "screenshot_unique.png"
+    image_path.write_bytes(b"not decoded when CUDA is unavailable")
+    monkeypatch.setattr(vision_pipeline, "get_current_tier", lambda: "mid")
+    monkeypatch.setattr(vision_pipeline.torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(vision_pipeline, "find_model", lambda repo_id: Path("model"))
+    monkeypatch.setattr(
+        vision_pipeline,
+        "get_model_and_processor",
+        lambda: pytest.fail("vision model loader must not run without CUDA"),
+    )
+    monkeypatch.setattr(
+        backfill_index,
+        "describe_image",
+        lambda path: pytest.fail("image description must not run without CUDA"),
+    )
+    monkeypatch.setattr(backfill_index, "_IMAGE_FALLBACK_WARNED", False)
+
+    notices = []
+    result = backfill_index.index_one_file(
+        image_path,
+        status_callback=notices.append,
+    )
+
+    assert "image filename only" in result
+    assert notices == [
+        "Image descriptions need a GPU - using file names only for now"
+    ]
+    assert f"{normalize_path(image_path)}::filename" in collection.items
+    assert not any(
+        item["metadata"].get("match_type") == "content"
+        for item in collection.items.values()
+    )
+
+
 def test_deleted_file_event_removes_vectors_metadata_and_chunks(
     tmp_path, isolated_index
 ):

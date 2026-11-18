@@ -19,7 +19,7 @@ from pathlib import Path
 
 from indexing.file_router import route_file
 from indexing.text_pipeline import process_document
-from indexing.vision_pipeline import describe_image
+from indexing.vision_pipeline import describe_image, image_description_status
 from indexing.embedder import embed_text, embed_texts
 from storage.metadata_store import (
     delete_file,
@@ -57,6 +57,7 @@ EXCLUDED_FOLDER_NAMES = {".git", "node_modules", "venv", "__pycache__", ".venv",
 
 SETTINGS_PATH = get_config_path("settings.json")
 MAX_INDEX_FAILURES = 3
+_IMAGE_FALLBACK_WARNED = False
 
 
 def load_indexed_folders(settings_path=None):
@@ -152,7 +153,18 @@ def cleanup_missing_files(indexed_folders=None):
     return removed
 
 
-def index_one_file(file_path, force=False):
+def _warn_image_fallback(status_callback=None, reason=""):
+    global _IMAGE_FALLBACK_WARNED
+    if _IMAGE_FALLBACK_WARNED:
+        return
+    _IMAGE_FALLBACK_WARNED = True
+    message = "Image descriptions need a GPU - using file names only for now"
+    log(f"WARNING: {message} ({reason})")
+    if status_callback is not None:
+        status_callback(message)
+
+
+def index_one_file(file_path, force=False, status_callback=None):
     """
     Route, process, and store a single file (text or image) -- but skip
     it entirely if it's already indexed and hasn't changed since. Also
@@ -235,13 +247,18 @@ def index_one_file(file_path, force=False):
 
             save_chunks(path_str, chunks)
         elif category == "image":
-            description = describe_image(path_str)
-            vector = embed_text(description)
-            add_item(path_str, vector, metadata={
-                "path": path_str,
-                "description": description,
-                "match_type": "content"
-            })
+            can_describe, reason = image_description_status()
+            if can_describe:
+                description = describe_image(path_str)
+                vector = embed_text(description)
+                add_item(path_str, vector, metadata={
+                    "path": path_str,
+                    "description": description,
+                    "match_type": "content"
+                })
+            else:
+                description = None
+                _warn_image_fallback(status_callback, reason)
             chunks = None
         else:
             raise ValueError(f"Unsupported file type for indexing: {category}")
@@ -268,10 +285,12 @@ def index_one_file(file_path, force=False):
 
     if category == "text/document":
         return f"[INDEXED - text] {path_str} -> {len(chunks)} chunks"
+    if description is None:
+        return f"[INDEXED - image filename only] {path_str}"
     return f"[INDEXED - image] {path_str} -> \"{description}\""
 
 def backfill(settings_path=None, progress_callback=None, error_callback=None,
-             indexed_folders=None):
+             indexed_folders=None, status_callback=None):
     """
     Recursively scan every folder listed in settings.json and index all
     supported files found.
@@ -330,7 +349,11 @@ def backfill(settings_path=None, progress_callback=None, error_callback=None,
             progress_callback(folder_name, short_name, i, total)
 
         try:
-            status = index_one_file(file_path, force=rebuild_index)
+            status = index_one_file(
+                file_path,
+                force=rebuild_index,
+                status_callback=status_callback,
+            )
             if "SKIPPED - unknown type" in status:
                 pass  # not an error, just an unsupported file type, no red icon
         except Exception as e:
