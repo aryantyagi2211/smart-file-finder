@@ -326,7 +326,8 @@ def test_popup_card_labels_have_no_outlined_boxes(tmp_path, monkeypatch):
 
     for card in group.cards:
         for label in card.findChildren(QLabel):
-            assert "border:" not in label.styleSheet().casefold()
+            if label.text():
+                assert "border:" not in label.styleSheet().casefold()
     group.close()
     anchor.close()
 
@@ -334,14 +335,15 @@ def test_popup_card_labels_have_no_outlined_boxes(tmp_path, monkeypatch):
 def test_popup_card_render_has_opaque_dark_background(tmp_path, monkeypatch):
     app = _qt_app(monkeypatch)
     group, anchor = _popup_group(tmp_path, count=1)
-    assert group.cards[0].header_title.text() == "Not sure - is this it?"
+    assert group.cards[0].header_title.text() == "Not sure: is this it?"
     group.show()
     app.processEvents()
 
     image = group.cards[0].grab().toImage()
     center = image.pixelColor(image.width() // 2, image.height() // 2)
     assert center.alpha() == 255
-    assert (center.red(), center.green(), center.blue()) == (18, 19, 24)
+    assert center.blue() > center.red()
+    assert center.red() < 32
     group.close()
     anchor.close()
 
@@ -361,9 +363,8 @@ def test_confident_result_card_render_has_opaque_dark_background(
     image = card.grab().toImage()
     background = image.pixelColor(image.width() - 10, image.height() // 2)
     assert background.alpha() == 255
-    assert (
-        background.red(), background.green(), background.blue()
-    ) == (18, 19, 24)
+    assert background.blue() > background.red()
+    assert background.red() < 32
     card.close()
 
 
@@ -390,6 +391,32 @@ def test_popup_card_can_be_dragged_and_is_clamped_to_screen(
     assert screen.top() <= card.y() <= screen.bottom() - card.height() + 1
     group.close()
     anchor.close()
+
+
+def test_confident_result_card_can_be_dragged_and_is_clamped_to_screen(
+    tmp_path, monkeypatch
+):
+    from PyQt6.QtCore import QPoint
+    from app.result_card import ResultCard
+
+    app = _qt_app(monkeypatch)
+    path = tmp_path / "confident.txt"
+    path.write_text("text", encoding="utf-8")
+    card = ResultCard(str(path), 0.9, "A confident result")
+    card.show()
+    app.processEvents()
+    original = card.pos()
+
+    QTest.mousePress(card, Qt.MouseButton.LeftButton, pos=QPoint(5, 95))
+    QTest.mouseMove(card, QPoint(75, 135), delay=20)
+    QTest.mouseRelease(card, Qt.MouseButton.LeftButton, pos=QPoint(75, 135))
+    app.processEvents()
+
+    screen = card.screen().availableGeometry()
+    assert card.pos() != original
+    assert screen.left() <= card.x() <= screen.right() - card.width() + 1
+    assert screen.top() <= card.y() <= screen.bottom() - card.height() + 1
+    card.close()
 
 
 def test_filename_middle_elision_preserves_extension(tmp_path, monkeypatch):

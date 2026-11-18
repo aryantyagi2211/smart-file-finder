@@ -17,46 +17,43 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import (
     QPixmap, QIcon, QFont, QFontMetrics, QCursor, QGuiApplication, QPainter, QPainterPath,
-    QPen, QColor, QMouseEvent,
+    QPen, QColor, QMouseEvent, QLinearGradient,
 )
-from PyQt6.QtCore import Qt, QObject, pyqtSignal, QEvent, QRectF
+from PyQt6.QtCore import Qt, QObject, pyqtSignal, QEvent, QRectF, QPoint
 from PyQt6.QtWidgets import QApplication
 from agent.candidate_utils import select_options_by_score
 from agent.harness import load_limits
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
 
-CARD_WIDTH = 400
-CARD_HEIGHT = 380
+CARD_WIDTH = 450
+CARD_HEIGHT = 190
+POPUP_ACCENTS = ("#bd35ff", "#1498ff", "#08d985")
 
-PRIMARY_BUTTON_STYLE = """
+COMPACT_PRIMARY_BUTTON_STYLE = """
     QPushButton {
-        background-color: rgba(70, 130, 240, 235);
+        background-color: #0877ff;
         color: white;
         border: none;
-        border-radius: 10px;
-        padding: 10px;
-        font-size: 13px;
+        border-radius: 12px;
+        padding: 3px 12px;
+        font-size: 11px;
         font-weight: 600;
-        text-align: center;
     }
-    QPushButton:hover { background-color: rgba(90, 150, 255, 240); }
-    QPushButton:pressed { background-color: rgba(55, 110, 210, 240); }
+    QPushButton:hover { background-color: #258dff; }
 """
 
-SECONDARY_BUTTON_STYLE = """
+COMPACT_SECONDARY_BUTTON_STYLE = """
     QPushButton {
         background-color: rgba(255, 255, 255, 16);
-        color: #e8e8ec;
+        color: white;
         border: 1px solid rgba(255, 255, 255, 40);
-        border-radius: 10px;
-        padding: 10px;
-        font-size: 13px;
+        border-radius: 12px;
+        padding: 3px 12px;
+        font-size: 11px;
         font-weight: 600;
-        text-align: center;
     }
     QPushButton:hover { background-color: rgba(255, 255, 255, 28); }
-    QPushButton:pressed { background-color: rgba(255, 255, 255, 10); }
 """
 
 
@@ -67,23 +64,50 @@ def _strip_confidence_from_explanation(explanation):
     return explanation
 
 
-def _format_size(num_bytes):
-    for unit in ["B", "KB", "MB", "GB"]:
-        if num_bytes < 1024:
-            return f"{num_bytes:.0f} {unit}" if unit == "B" else f"{num_bytes:.1f} {unit}"
-        num_bytes /= 1024
-    return f"{num_bytes:.1f} TB"
-
-
-def _paint_card_background(widget):
+def _paint_card_background(widget, accent="#168aff"):
     painter = QPainter(widget)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     rect = QRectF(widget.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
     path = QPainterPath()
-    path.addRoundedRect(rect, 14, 14)
-    painter.fillPath(path, QColor(18, 19, 24, 255))
-    painter.setPen(QPen(QColor(64, 65, 73, 255), 1))
+    path.addRoundedRect(rect, 20, 20)
+    painter.fillPath(path, QColor("#08152f"))
+    gradient = QLinearGradient(rect.topLeft(), rect.bottomRight())
+    gradient.setColorAt(0, QColor(38, 35, 83, 190))
+    gradient.setColorAt(0.55, QColor(17, 26, 56, 170))
+    gradient.setColorAt(1, QColor(7, 17, 43, 220))
+    painter.fillPath(path, gradient)
+    for width, alpha in ((8, 24), (4, 45)):
+        painter.setOpacity(alpha / 255)
+        painter.setPen(QPen(QColor(accent), width))
+        painter.drawPath(path)
+    painter.setOpacity(1)
+    painter.setPen(QPen(QColor(accent), 1.5))
     painter.drawPath(path)
+    painter.end()
+
+
+def _set_drag_surface(widget):
+    widget.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+
+def _move_popup_to_cursor(widget, anchor=None):
+    screen = anchor.screen() if anchor is not None else None
+    screen = screen or QGuiApplication.screenAt(QCursor.pos())
+    screen = screen or QApplication.primaryScreen()
+    if screen is None:
+        return None
+    bounds = screen.availableGeometry()
+    if anchor is not None:
+        center = anchor.mapToGlobal(anchor.rect().center())
+        x = center.x() - widget.width() // 2
+        y = anchor.mapToGlobal(QPoint(0, 0)).y() - widget.height() - 18
+    else:
+        x = bounds.center().x() - widget.width() // 2
+        y = bounds.center().y() - widget.height() // 2
+    x = max(bounds.left(), min(x, bounds.right() - widget.width() + 1))
+    y = max(bounds.top(), min(y, bounds.bottom() - widget.height() + 1))
+    widget.move(x, y)
+    return screen
 
 
 def _elide_filename(name, font, width):
@@ -109,152 +133,207 @@ def _elide_filename(name, font, width):
 
 
 class ResultCard(QWidget):
-    def __init__(self, file_path, score, explanation):
+    """Compact confident-result card matching the ranked popup visual style."""
+
+    def __init__(self, file_path, score, explanation, anchor=None):
         super().__init__()
-        self.file_path = file_path
-        self.score = score
+        self.file_path = str(file_path)
+        self.score = float(score)
         self.explanation = _strip_confidence_from_explanation(explanation)
+        self.anchor = anchor
+        self._drag_offset = None
+        self._screen = None
         self._setup_ui()
 
     def _setup_ui(self):
         from app_paths import get_resource_path
+
         self.setWindowTitle("Smart File Finder")
         self.setWindowIcon(QIcon(str(get_resource_path("app_icon.ico"))))
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
+        )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setFixedSize(CARD_WIDTH, CARD_HEIGHT)
 
-        container = QWidget(self)
-        container.setGeometry(0, 0, CARD_WIDTH, CARD_HEIGHT)
-        container.setStyleSheet("background: transparent; border: none;")
+        path = Path(self.file_path)
+        extension = path.suffix.lower()
+        is_image = extension in IMAGE_EXTENSIONS and path.is_file()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 10, 16, 12)
+        layout.setSpacing(6)
 
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(20, 18, 20, 20)
-        layout.setSpacing(14)
+        header = QHBoxLayout()
+        self.best_badge = QLabel("Best match")
+        self.best_badge.setStyleSheet(
+            "color: white; background: #0877ff; border-radius: 10px;"
+            "padding: 3px 10px; font-size: 11px; font-weight: 700;"
+        )
+        _set_drag_surface(self.best_badge)
+        header.addWidget(self.best_badge)
+        header.addStretch(1)
+        dots = QLabel("•••")
+        dots.setStyleSheet("color: #559cff; font-size: 12px;")
+        _set_drag_surface(dots)
+        header.addWidget(dots)
+        close_button = QPushButton()
+        close_button.setIcon(qta.icon("fa5s.times", color="#dce8ff"))
+        close_button.setFixedSize(24, 24)
+        close_button.setStyleSheet("QPushButton { border: none; }")
+        close_button.clicked.connect(self.close)
+        header.addWidget(close_button)
+        layout.addLayout(header)
 
-        path_obj = Path(self.file_path)
-        ext = path_obj.suffix.lower()
-        is_image = ext in IMAGE_EXTENSIONS and os.path.exists(self.file_path)
-
-        # --- Header row: icon badge + filename + metadata + close button ---
-        header_row = QHBoxLayout()
-        header_row.setSpacing(12)
-
-        badge = QLabel()
-        badge.setFixedSize(38, 38)
-        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        badge_icon = qta.icon("fa5s.image" if is_image else "fa5s.file-alt",
-                               color="#8fb3ff" if is_image else "#b8b8c0")
-        badge.setPixmap(badge_icon.pixmap(20, 20))
-        badge.setStyleSheet(f"""
-            background-color: {"rgba(70, 130, 240, 55)" if is_image else "rgba(150, 150, 160, 35)"};
-            border-radius: 10px;
-        """)
-        header_row.addWidget(badge)
-
-        title_col = QVBoxLayout()
-        title_col.setSpacing(2)
-        filename_label = QLabel(path_obj.name)
-        filename_label.setStyleSheet("color: #f2f2f5; font-size: 14px; font-weight: 700;")
-        filename_label.setWordWrap(True)
-        title_col.addWidget(filename_label)
-
-        meta_parts = [ext.replace(".", "").upper() or "FILE"]
-        try:
-            meta_parts.append(_format_size(os.path.getsize(self.file_path)))
-        except OSError:
-            pass
+        body = QHBoxLayout()
+        body.setSpacing(14)
+        preview = QFrame()
+        preview.setFixedSize(90, 90)
+        preview.setStyleSheet(
+            "QFrame { background: #075ce8; border: 1px solid #168aff;"
+            "border-radius: 16px; }"
+        )
+        _set_drag_surface(preview)
+        preview_layout = QVBoxLayout(preview)
+        preview_layout.setContentsMargins(4, 4, 4, 4)
+        preview_item = QLabel()
+        preview_item.setAlignment(Qt.AlignmentFlag.AlignCenter)
         if is_image:
-            pixmap_check = QPixmap(self.file_path)
-            if not pixmap_check.isNull():
-                meta_parts.append(f"{pixmap_check.width()} × {pixmap_check.height()}")
-        meta_label = QLabel("  •  ".join(meta_parts))
-        meta_label.setStyleSheet("color: #8a8a92; font-size: 11px;")
-        title_col.addWidget(meta_label)
-
-        header_row.addLayout(title_col, stretch=1)
-
-        close_btn = QPushButton()
-        close_btn.setIcon(qta.icon("fa5s.times", color="#9a9aa2"))
-        close_btn.setFixedSize(26, 26)
-        close_btn.setStyleSheet("""
-            QPushButton {
-                background-color: rgba(255, 255, 255, 14);
-                border: none;
-                border-radius: 13px;
-            }
-            QPushButton:hover { background-color: rgba(255, 80, 80, 180); }
-        """)
-        close_btn.clicked.connect(self.close)
-        header_row.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignTop)
-
-        layout.addLayout(header_row)
-
-        # --- Preview box ---
-        preview_frame = QFrame()
-        preview_frame.setFixedHeight(230)
-        preview_frame.setStyleSheet("""
-            background-color: rgba(255, 255, 255, 5);
-            border: 1px solid rgba(255, 255, 255, 20);
-            border-radius: 14px;
-        """)
-        preview_layout = QVBoxLayout(preview_frame)
-        preview_layout.setContentsMargins(10, 10, 10, 10)
-
-        if is_image:
-            thumb_label = QLabel()
-            thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             pixmap = QPixmap(self.file_path)
             if not pixmap.isNull():
-                pixmap = pixmap.scaled(340, 210, Qt.AspectRatioMode.KeepAspectRatio,
-                                        Qt.TransformationMode.SmoothTransformation)
-                thumb_label.setPixmap(pixmap)
-            preview_layout.addWidget(thumb_label)
+                preview_item.setPixmap(pixmap.scaled(
+                    80, 80, Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                ))
         else:
-            icon_label = QLabel()
-            icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            big_icon = qta.icon("fa5s.file-alt", color="#5a5a64")
-            icon_label.setPixmap(big_icon.pixmap(64, 64))
-            preview_layout.addWidget(icon_label)
+            preview_item.setPixmap(
+                qta.icon("fa5s.file-alt", color="white").pixmap(48, 48)
+            )
+        _set_drag_surface(preview_item)
+        preview_layout.addWidget(preview_item)
+        body.addWidget(preview)
 
-        layout.addWidget(preview_frame)
+        details = QVBoxLayout()
+        details.setSpacing(4)
+        filename = QLabel()
+        self.filename_label = filename
+        filename.setToolTip(path.name)
+        font = QFont(filename.font())
+        font.setPixelSize(14)
+        font.setBold(True)
+        filename.setFont(font)
+        filename.setStyleSheet("color: #f4f7ff;")
+        filename.setText(_elide_filename(path.name, font, 280))
+        _set_drag_surface(filename)
+        details.addWidget(filename)
 
-        # --- Buttons ---
-        button_row = QHBoxLayout()
-        button_row.setSpacing(10)
+        score_row = QHBoxLayout()
+        score_row.setSpacing(8)
+        score_label = QLabel(f"{self.score:.0%} match")
+        score_label.setStyleSheet(
+            "color: white; background: #0877ff; border-radius: 9px;"
+            "padding: 3px 9px; font-size: 10px; font-weight: 700;"
+        )
+        _set_drag_surface(score_label)
+        score_row.addWidget(score_label)
+        score_bar = QFrame()
+        score_bar.setFixedSize(150, 7)
+        score_bar.setStyleSheet("background: #25365e; border-radius: 3px;")
+        score_fill = QFrame(score_bar)
+        score_fill.setGeometry(
+            0, 0, int(150 * max(0, min(1, self.score))), 7
+        )
+        score_fill.setStyleSheet("background: #27a7ff; border-radius: 3px;")
+        _set_drag_surface(score_bar)
+        score_row.addWidget(score_bar)
+        score_row.addStretch(1)
+        details.addLayout(score_row)
 
-        open_btn = QPushButton(" Open")
-        open_btn.setIcon(qta.icon("fa5s.external-link-alt", color="#e8e8ec"))
-        open_btn.setStyleSheet(SECONDARY_BUTTON_STYLE)
-        open_btn.setFixedHeight(42)
-        open_btn.clicked.connect(self._handle_open)
+        explanation = QLabel(_elide_explanation(
+            self.explanation or "Content matches your query closely",
+            self.font(),
+            280,
+            max_lines=1,
+        ))
+        explanation.setFixedHeight(16)
+        explanation.setStyleSheet("color: #b7c9e8; font-size: 11px;")
+        explanation.setToolTip(self.explanation)
+        _set_drag_surface(explanation)
+        details.addWidget(explanation)
 
-        show_btn = QPushButton(" Show in Folder")
-        show_btn.setIcon(qta.icon("fa5s.folder-open", color="white"))
-        show_btn.setStyleSheet(PRIMARY_BUTTON_STYLE)
-        show_btn.setFixedHeight(42)
-        show_btn.clicked.connect(self._handle_show)
+        folder = QLabel(f"…\\{path.parent.name}")
+        folder.setToolTip(str(path.parent))
+        folder.setStyleSheet("color: #b5c7e4; font-size: 10px;")
+        _set_drag_surface(folder)
+        details.addWidget(folder)
 
-        button_row.addWidget(open_btn, stretch=1)
-        button_row.addWidget(show_btn, stretch=1)
-        layout.addLayout(button_row)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        open_button = QPushButton("Open")
+        open_button.setStyleSheet(COMPACT_SECONDARY_BUTTON_STYLE)
+        open_button.setFixedHeight(28)
+        open_button.clicked.connect(self._handle_open)
+        show_button = QPushButton("Show")
+        show_button.setStyleSheet(COMPACT_PRIMARY_BUTTON_STYLE)
+        show_button.setFixedHeight(28)
+        show_button.clicked.connect(self._handle_show)
+        buttons.addWidget(open_button)
+        buttons.addWidget(show_button)
+        details.addLayout(buttons)
+        body.addLayout(details, stretch=1)
+        layout.addLayout(body)
+        self._screen = _move_popup_to_cursor(self, self.anchor)
 
     def _handle_open(self):
         try:
-            absolute_path = str(Path(self.file_path).resolve())
-            os.startfile(absolute_path)
-        except Exception as e:
-            QMessageBox.warning(self, "Error", f"Could not open file: {e}")
+            os.startfile(str(Path(self.file_path).resolve()))
+        except Exception as error:
+            QMessageBox.warning(self, "Error", f"Could not open file: {error}")
 
     def _handle_show(self):
         try:
-            folder = Path(self.file_path).resolve().parent
-            os.startfile(folder)
-        except Exception as e:
-            QMessageBox.warning(self, "Error", f"Could not open folder: {e}")
+            os.startfile(Path(self.file_path).resolve().parent)
+        except Exception as error:
+            QMessageBox.warning(self, "Error", f"Could not open folder: {error}")
 
     def paintEvent(self, event):
-        _paint_card_background(self)
+        _paint_card_background(self, "#168aff")
+
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_offset = (
+                event.globalPosition().toPoint()
+                - self.frameGeometry().topLeft()
+            )
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        if self._drag_offset is not None and (
+            event.buttons() & Qt.MouseButton.LeftButton
+        ):
+            target = event.globalPosition().toPoint() - self._drag_offset
+            screen = self._screen or self.screen() or QApplication.primaryScreen()
+            if screen is not None:
+                bounds = screen.availableGeometry()
+                target.setX(max(
+                    bounds.left(),
+                    min(target.x(), bounds.right() - self.width() + 1),
+                ))
+                target.setY(max(
+                    bounds.top(),
+                    min(target.y(), bounds.bottom() - self.height() + 1),
+                ))
+                self.move(target)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        self._drag_offset = None
+        super().mouseReleaseEvent(event)
 
 
 def _elide_explanation(text, font, width, max_lines=2):
@@ -283,7 +362,7 @@ def _elide_explanation(text, font, width, max_lines=2):
 
 
 class OptionsPopupCard(QWidget):
-    """One ranked file option in the popup group."""
+    """Compact, accent-colored option card matching the supplied UI reference."""
 
     def __init__(self, group, rank, option, width):
         super().__init__()
@@ -292,6 +371,7 @@ class OptionsPopupCard(QWidget):
         self.option = option
         self.file_path = Path(option["path"]).resolve()
         self._drag_offset = None
+        self.accent = POPUP_ACCENTS[(rank - 1) % len(POPUP_ACCENTS)]
         self.setWindowTitle("Smart File Finder")
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -308,34 +388,39 @@ class OptionsPopupCard(QWidget):
 
         self.setWindowIcon(QIcon(str(get_resource_path("app_icon.ico"))))
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 9, 14, 9)
-        layout.setSpacing(3)
+        layout.setContentsMargins(12, 8, 12, 9)
+        layout.setSpacing(4)
 
         header = QHBoxLayout()
+        header.setSpacing(8)
         badge = QLabel(str(self.rank))
         badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        badge.setFixedSize(26, 26)
-        badge.setStyleSheet("""
-            QLabel {
-                color: #f2f2f5;
-                font-weight: 700;
-                font-size: 13px;
-            }
-        """)
-        badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        badge.setFixedSize(24, 24)
+        badge.setStyleSheet(
+            f"color: white; background: {self.accent}; border-radius: 12px;"
+            "font-size: 12px; font-weight: 700;"
+        )
+        _set_drag_surface(badge)
         header.addWidget(badge)
         title = QLabel(
-            "Not sure - is this it?"
+            "Not sure: is this it?"
             if len(self.group.options) == 1
-            else "Not sure - pick a file"
+            else "Not sure: pick a file"
         )
         self.header_title = title
-        title.setStyleSheet("color: #f2f2f5; font-size: 12px; font-weight: 700;")
-        title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        header.addWidget(title, stretch=1)
+        title.setStyleSheet(
+            f"color: {self.accent}; font-size: 12px; font-weight: 700;"
+        )
+        _set_drag_surface(title)
+        header.addWidget(title)
+        header.addStretch(1)
+        dots = QLabel("•••")
+        dots.setStyleSheet(f"color: {self.accent}; font-size: 12px;")
+        _set_drag_surface(dots)
+        header.addWidget(dots)
         self.close_button = QPushButton()
-        self.close_button.setIcon(qta.icon("fa5s.times", color="#9a9aa2"))
-        self.close_button.setFixedSize(22, 22)
+        self.close_button.setIcon(qta.icon("fa5s.times", color="#dce8ff"))
+        self.close_button.setFixedSize(23, 23)
         self.close_button.setStyleSheet("QPushButton { border: none; }")
         self.close_button.clicked.connect(
             lambda checked=False: self.group.close_card(self.rank)
@@ -343,89 +428,122 @@ class OptionsPopupCard(QWidget):
         header.addWidget(self.close_button)
         layout.addLayout(header)
 
-        filename = QLabel()
-        self.filename_label = filename
-        filename.setToolTip(self.file_path.name)
-        filename_font = QFont(filename.font())
-        filename_font.setPixelSize(13)
-        filename_font.setBold(True)
-        filename.setFont(filename_font)
-        filename.setStyleSheet("color: #f2f2f5;")
-        name_width = width - 28
-        filename.setFixedWidth(name_width)
-        filename.setText(_elide_filename(
-            self.file_path.name, filename.font(), name_width
-        ))
-        filename.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        layout.addWidget(filename)
-
-        score = QLabel(f"{float(self.option['score']):.0%} match")
-        score.setStyleSheet("color: #8fb3ff; font-size: 11px;")
-        score.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        layout.addWidget(score)
-
-        explanation = QLabel(_elide_explanation(
-            _strip_confidence_from_explanation(
-                self.option.get("explanation", "")
-            ),
-            self.font(),
-            width - 28,
-        ))
-        explanation.setToolTip(self.option.get("explanation", ""))
-        explanation.setStyleSheet("color: #aaaab2; font-size: 11px;")
-        explanation.setFixedHeight(26)
-        explanation.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        layout.addWidget(explanation)
-
-        folder = QLabel(f"…\\{self.file_path.parent.name}")
-        folder.setToolTip(str(self.file_path.parent))
-        folder.setStyleSheet("color: #85858e; font-size: 10px;")
-        folder.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        layout.addWidget(folder)
-
-        details_row = QHBoxLayout()
-        details_row.setSpacing(8)
+        body = QHBoxLayout()
+        body.setSpacing(12)
         thumbnail = QLabel()
-        thumbnail.setFixedSize(30, 30)
+        thumbnail.setFixedSize(82, 82)
         thumbnail.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        thumbnail.setStyleSheet(
+            f"background: {self.accent}; border: 1px solid {self.accent};"
+            "border-radius: 15px;"
+        )
         if self.file_path.suffix.lower() in IMAGE_EXTENSIONS:
             pixmap = QPixmap(str(self.file_path))
             if not pixmap.isNull():
                 thumbnail.setPixmap(pixmap.scaled(
-                    30, 30, Qt.AspectRatioMode.KeepAspectRatio,
+                    82, 82, Qt.AspectRatioMode.KeepAspectRatio,
                     Qt.TransformationMode.SmoothTransformation,
                 ))
         if thumbnail.pixmap() is None or thumbnail.pixmap().isNull():
-            icon = qta.icon(
-                "fa5s.image" if self.file_path.suffix.lower() in IMAGE_EXTENSIONS
-                else "fa5s.file-alt",
-                color="#8fb3ff",
+            icon_name = (
+                "fa5s.file-pdf"
+                if self.file_path.suffix.lower() == ".pdf"
+                else "fa5s.file-alt"
             )
-            thumbnail.setPixmap(icon.pixmap(22, 22))
-        thumbnail.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        details_row.addWidget(thumbnail)
+            thumbnail.setPixmap(
+                qta.icon(icon_name, color="white").pixmap(42, 48)
+            )
+        _set_drag_surface(thumbnail)
+        body.addWidget(thumbnail)
+
+        details = QVBoxLayout()
+        details.setSpacing(4)
+        filename = QLabel()
+        self.filename_label = filename
+        filename.setToolTip(self.file_path.name)
+        font = QFont(filename.font())
+        font.setPixelSize(13)
+        font.setBold(True)
+        filename.setFont(font)
+        filename.setStyleSheet("color: #f4f7ff;")
+        filename.setFixedWidth(width - 132)
+        filename.setText(_elide_filename(
+            self.file_path.name, font, width - 132
+        ))
+        _set_drag_surface(filename)
+        details.addWidget(filename)
+
+        score_row = QHBoxLayout()
+        score_row.setSpacing(8)
+        score = QLabel(f"{float(self.option['score']):.0%} match")
+        score.setStyleSheet(
+            f"color: white; background: {self.accent}; border-radius: 9px;"
+            "padding: 3px 8px; font-size: 10px; font-weight: 700;"
+        )
+        _set_drag_surface(score)
+        score_row.addWidget(score)
+        score_bar = QFrame()
+        score_bar.setFixedSize(136, 7)
+        score_bar.setStyleSheet("background: #25365e; border-radius: 3px;")
+        score_fill = QFrame(score_bar)
+        score_fill.setGeometry(
+            0, 0,
+            int(136 * max(0, min(1, float(self.option["score"])))),
+            7,
+        )
+        score_fill.setStyleSheet(
+            f"background: {self.accent}; border-radius: 3px;"
+        )
+        _set_drag_surface(score_bar)
+        score_row.addWidget(score_bar)
+        score_row.addStretch(1)
+        details.addLayout(score_row)
+
+        explanation_text = _strip_confidence_from_explanation(
+            self.option.get("explanation", "")
+        )
+        explanation = QLabel(_elide_explanation(
+            explanation_text or "Content is similar to your query",
+            self.font(),
+            width - 132,
+            max_lines=1,
+        ))
+        explanation.setToolTip(explanation_text)
+        explanation.setStyleSheet("color: #b7c9e8; font-size: 11px;")
+        explanation.setFixedHeight(16)
+        _set_drag_surface(explanation)
+        details.addWidget(explanation)
+
+        folder = QLabel(f"…\\{self.file_path.parent.name}")
+        folder.setToolTip(str(self.file_path.parent))
+        folder.setStyleSheet("color: #b5c7e4; font-size: 10px;")
+        _set_drag_surface(folder)
+        details.addWidget(folder)
 
         buttons = QHBoxLayout()
-        buttons.setSpacing(7)
+        buttons.addStretch(1)
         self.open_button = QPushButton("Open")
-        self.open_button.setStyleSheet(SECONDARY_BUTTON_STYLE)
-        self.open_button.setFixedHeight(30)
+        self.open_button.setStyleSheet(COMPACT_SECONDARY_BUTTON_STYLE)
+        self.open_button.setFixedSize(90, 28)
         self.open_button.clicked.connect(
             lambda checked=False: self.group.choose(self.rank, "open")
         )
         self.show_button = QPushButton("Show")
-        self.show_button.setStyleSheet(PRIMARY_BUTTON_STYLE)
-        self.show_button.setFixedHeight(30)
+        self.show_button.setStyleSheet(
+            COMPACT_PRIMARY_BUTTON_STYLE.replace("#0877ff", self.accent)
+        )
+        self.show_button.setFixedSize(90, 28)
         self.show_button.clicked.connect(
             lambda checked=False: self.group.choose(self.rank, "show")
         )
-        buttons.addWidget(self.open_button, stretch=1)
-        buttons.addWidget(self.show_button, stretch=1)
-        details_row.addLayout(buttons, stretch=1)
-        layout.addLayout(details_row)
+        buttons.addWidget(self.open_button)
+        buttons.addWidget(self.show_button)
+        details.addLayout(buttons)
+        body.addLayout(details, stretch=1)
+        layout.addLayout(body)
 
     def paintEvent(self, event):
-        _paint_card_background(self)
+        _paint_card_background(self, self.accent)
 
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -470,8 +588,8 @@ class OptionsPopupGroup(QObject):
     """Creates and manages a coordinated set of ranked option cards."""
 
     choice_made = pyqtSignal(str, str)
-    CARD_WIDTH = 340
-    MAX_CARD_HEIGHT = 184
+    CARD_WIDTH = 400
+    MAX_CARD_HEIGHT = 168
     GAP = 12
 
     def __init__(self, options, anchor=None):

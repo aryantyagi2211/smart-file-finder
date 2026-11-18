@@ -20,6 +20,7 @@
 Status: **Done** — unit and integration tests, the golden-set evaluation, three CLI checks, and an offscreen pick-list interaction check have passed.
 
 - Confident searches return one file without a confirmation popup.
+- The confident result uses the compact reference card style and is movable by dragging its non-button surface.
 - Uncertain searches show a vertical left-side stack of 1-3 independently movable popup cards, filtered by relevance, with ranks, scores, explanations, folder paths, and Open / Show actions.
 - Queries below the options floor return NO_MATCH.
 - Decision thresholds: confidence `0.55`, ambiguity margin `0.07`, options floor `0.48`, maximum options `3`.
@@ -36,4 +37,4 @@ Status: **Done** — unit and integration tests, the golden-set evaluation, thre
 
 ## Current status
 
-Feature 1 is implemented and validated with confidence threshold `0.55`, ambiguity margin `0.07`, options floor `0.48`, maximum options `3`, minimum additional-card score `0.50`, and option score window `0.03`. Uncertain results use an independently movable vertical stack of 1-3 cards on the left; the full desktop UI has not yet been visually verified interactively.
+Feature 1 is implemented and validated with confidence threshold `0.55`, ambiguity margin `0.07`, options floor `0.48`, maximum options `3`, minimum additional-card score `0.50`, and option score window `0.03`. Both confident and uncertain results use the compact reference card style; confident cards and the 1-3-card uncertain stack are movable. The full desktop UI has not yet been visually verified interactively.

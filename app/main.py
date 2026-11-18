@@ -226,7 +226,8 @@ class SmartFileFinderApp:
         self.result_card = ResultCard(
             file_path=result["path"],
             score=result["score"],
-            explanation=result["explanation"]
+            explanation=result["explanation"],
+            anchor=self.input_bar,
         )
 
         if should_auto_open(parsed.command, result.get("action")):

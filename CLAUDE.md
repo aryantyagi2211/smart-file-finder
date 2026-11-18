@@ -3,6 +3,7 @@
 ## Locked decisions
 
 - Confident search results show one file.
+- Confident result cards use the compact reference style and can be moved by dragging the card surface.
 - Not-sure results show a vertical stack of 1-3 separate, movable popup cards on the left side of the cursor/input-bar screen, selected by relevance.
 - The best file is always shown; additional cards must score at least `0.50` and be within `0.03` of the best score.
 - There is no low-confidence confirmation popup.
