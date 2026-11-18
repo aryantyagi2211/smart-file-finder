@@ -3,16 +3,18 @@
     "big": {
       "min_ram_gb": 24,
       "min_vram_gb": 12,
-      "min_free_disk_gb": 42,
-      "vision_model": "google/gemma-4-E4B-it (4-bit, untested)",
+      "min_free_disk_gb": 17,
+      "vision_model": "google/gemma-4-E2B-it (4-bit)",
+      "vision_model_repo_id": "google/gemma-4-E2B-it",
       "whisper_model_size": "small/medium",
       "summarizer": "yes"
     },
     "mid": {
       "min_ram_gb": 12,
       "min_vram_gb": 4,
-      "min_free_disk_gb": 18,
+      "min_free_disk_gb": 17,
       "vision_model": "google/gemma-4-E2B-it (4-bit)",
+      "vision_model_repo_id": "google/gemma-4-E2B-it",
       "whisper_model_size": "base",
       "summarizer": "yes"
     },
@@ -21,6 +23,7 @@
       "min_vram_gb": 0,
       "min_free_disk_gb": 3,
       "vision_model": "HuggingFaceTB/SmolVLM-500M-Instruct",
+      "vision_model_repo_id": "HuggingFaceTB/SmolVLM-500M-Instruct",
       "whisper_model_size": "tiny",
       "summarizer": "no"
     }
@@ -91,7 +94,7 @@
         "repository_file_count": 38,
         "family": "smolvlm",
         "requires_cuda": false,
-        "tiers": ["small", "mid", "big"],
+        "tiers": ["small"],
         "status": "ready",
         "prompt": "Describe only the visible subject, objects, text, and setting in one concise sentence. Do not guess or add details that are not clearly visible.",
         "max_new_tokens": 60,
@@ -146,38 +149,37 @@
           "tokenizer_config.json": 28336,
           "vocab.json": 800662
         }
-      },
-      {
-        "name": "Gemma 4 E4B-it",
-        "purpose": "vision",
-        "repo_id": "google/gemma-4-E4B-it",
-        "revision": "4ecc2ba63bcac23ba4a767fc87025b1450f84c9c",
-        "download_size_gb": 16.024781005,
-        "download_size_bytes": 16024781005,
-        "repository_size_gb": 16.024810531,
-        "repository_size_bytes": 16024810531,
-        "repository_file_count": 9,
-        "family": "gemma4",
-        "requires_cuda": true,
-        "family": "gemma4",
-        "requires_cuda": true,
-        "tiers": ["big"],
-        "status": "untested",
-        "prompt": "Describe this image in one or two sentences, focusing on what it depicts.",
-        "max_new_tokens": 60,
-        "license": "apache-2.0",
-        "gated": false,
-        "license": "apache-2.0",
-        "gated": false,
-        "files": {
-          "chat_template.jinja": 18569,
-          "config.json": 5145,
-          "generation_config.json": 208,
-          "model.safetensors": 15992595884,
-          "processor_config.json": 1689,
-          "tokenizer.json": 32156428,
-          "tokenizer_config.json": 3082
-        }
       }
+  ],
+  "optional_models": [
+    {
+      "name": "Gemma 4 E4B-it",
+      "purpose": "vision",
+      "repo_id": "google/gemma-4-E4B-it",
+      "revision": "4ecc2ba63bcac23ba4a767fc87025b1450f84c9c",
+      "download_size_gb": 16.024781005,
+      "download_size_bytes": 16024781005,
+      "repository_size_gb": 16.024810531,
+      "repository_size_bytes": 16024810531,
+      "repository_file_count": 9,
+      "family": "gemma4",
+      "requires_cuda": true,
+      "for_tier": "big",
+      "setting_value": "gemma-4-E4B-it",
+      "status": "untested",
+      "prompt": "Describe this image in one or two sentences, focusing on what it depicts.",
+      "max_new_tokens": 60,
+      "license": "apache-2.0",
+      "gated": false,
+      "files": {
+        "chat_template.jinja": 18569,
+        "config.json": 5145,
+        "generation_config.json": 208,
+        "model.safetensors": 15992595884,
+        "processor_config.json": 1689,
+        "tokenizer.json": 32156428,
+        "tokenizer_config.json": 3082
+      }
+    }
   ]
 }

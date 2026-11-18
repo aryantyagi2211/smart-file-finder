@@ -12,13 +12,13 @@
 ## Models and search thresholds
 
 - Embeddings use `all-mpnet-base-v2` (768 dimensions, local CPU).
-- Image understanding runs only while indexing: SmolVLM-500M on small, Gemma E2B 4-bit on mid, and Gemma E4B 4-bit on big (big is untested).
+- Image understanding runs only while indexing: SmolVLM-500M on small and Gemma E2B 4-bit on mid and big by default. Big may opt into Gemma E4B 4-bit with `big_vision_model: "gemma-4-E4B-it"`; E4B is untested.
 - `Qwen/Qwen3-1.7B` is used by the indexing-time summarizer only.
 - There is no live LLM reasoning in the search path; query refinement and result decisions are rule-based.
 - The only network use is downloading public model files from Hugging Face during explicit first-run setup. No user file, query, or telemetry is ever sent. After setup the app works fully offline.
-- `config/model_tiers.json` is the model registry. Download only the loader-required files pinned to each model revision; `download_size_gb` is that selected payload, while `repository_size_gb` records the full repository size.
+- `config/model_tiers.json` is the model registry. Each tier downloads only the embedding model plus exactly one primary vision model: small uses SmolVLM-500M; mid and big use Gemma E2B by default. Gemma E4B is in `optional_models`, is untested, and is downloaded only when selected in settings. Download only the loader-required files pinned to each model revision; `download_size_gb` is that selected payload, while `repository_size_gb` records the full repository size.
 - Models are stored under the app data folder's `models` directory. Resolve models with `app_paths.find_model`; enable Hugging Face offline mode only after required models are local.
-- Vision fallback order is big -> mid -> small -> filename-only; CUDA-required models are skipped without CUDA. Small uses SmolVLM on CPU or GPU without bitsandbytes.
+- Vision fallback order is big -> mid -> small -> filename-only; CUDA-required models are skipped without CUDA. A lower-tier model is used only if its pinned snapshot is already local. If it is absent, use the filename, show `Fallback model not downloaded - using file names only for now`, and never trigger a download from indexing. Small uses SmolVLM on CPU or GPU without bitsandbytes.
 - Load vision models lazily for the first image in a scan, release them and clear CUDA memory after the batch, and store the generating model repo id with image metadata. Tier changes do not re-index existing files automatically.
 - Confidence threshold: `0.55`; ambiguity margin: `0.07`; options floor: `0.48`; maximum options: `3`.
 
@@ -41,9 +41,9 @@ Feature 1 (top-three pick list) is implemented: confident queries return one fil
 Device-tier plan:
 
 - Device tiers keep embeddings fixed at `all-mpnet-base-v2` for every tier so existing vector indexes remain compatible. Tiers affect vision, voice, and optional summarizer choices only.
-- Auto-tier minimums: big = 24 GB RAM, 12 GB NVIDIA VRAM, 42 GB free disk; mid = 12 GB RAM, 4 GB NVIDIA VRAM, 18 GB free disk; small is the fallback with 3 GB free disk.
+- Auto-tier minimums: big = 24 GB RAM and 12 GB NVIDIA VRAM; mid = 12 GB RAM and 4 GB NVIDIA VRAM; small is the fallback. Free-disk minimums are rounded-up 1.5x the required payload: small = 3 GB, mid = 17 GB, big = 17 GB by default (25 GB with optional E4B).
 - Disk minimums are the rounded-up 1.5x size of each tier's required model payloads. Embeddings remain `all-mpnet-base-v2` for every tier.
 - Evaluation can isolate its data with `SMART_FILE_FINDER_EVAL_DATA_DIR`; the comparison runner sets it only in worker processes, leaving normal app runs unchanged.
 - Small-tier comparison favors SmolVLM-500M over 256M on this machine: higher image-case top-1/shown hit rates (60% vs 40%) with similar peak RAM, despite slower image processing (15.15 vs 10.93 seconds/image).
-- Gemma E4B is registered as untested; it has not been downloaded or run.
+- Gemma E4B is registered as optional and untested; it is not downloaded by default.
 - Feature 3: voice search, English-only initially, using local Whisper.

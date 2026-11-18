@@ -2,5 +2,6 @@
   "indexed_folders": [
     "test_data"
   ],
-  "performance_tier": "auto"
+  "performance_tier": "auto",
+  "big_vision_model": "gemma-4-E2B-it"
 }

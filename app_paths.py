@@ -12,6 +12,7 @@ readonly database" errors, confirmed during real installer testing.
 import sys
 import os
 import json
+import math
 from pathlib import Path
 
 APP_FOLDER_NAME = "SmartFileFinder"
@@ -20,16 +21,18 @@ MODEL_TIER_DEFAULTS = {
         "big": {
             "min_ram_gb": 24,
             "min_vram_gb": 12,
-            "min_free_disk_gb": 42,
-            "vision_model": "google/gemma-4-E4B-it (4-bit, untested)",
+            "min_free_disk_gb": 17,
+            "vision_model": "google/gemma-4-E2B-it (4-bit)",
+            "vision_model_repo_id": "google/gemma-4-E2B-it",
             "whisper_model_size": "small/medium",
             "summarizer": "yes",
         },
         "mid": {
             "min_ram_gb": 12,
             "min_vram_gb": 4,
-            "min_free_disk_gb": 18,
+            "min_free_disk_gb": 17,
             "vision_model": "google/gemma-4-E2B-it (4-bit)",
+            "vision_model_repo_id": "google/gemma-4-E2B-it",
             "whisper_model_size": "base",
             "summarizer": "yes",
         },
@@ -38,6 +41,7 @@ MODEL_TIER_DEFAULTS = {
             "min_vram_gb": 0,
             "min_free_disk_gb": 3,
             "vision_model": "HuggingFaceTB/SmolVLM-500M-Instruct",
+            "vision_model_repo_id": "HuggingFaceTB/SmolVLM-500M-Instruct",
             "whisper_model_size": "tiny",
             "summarizer": "no",
         },
@@ -108,7 +112,7 @@ MODEL_TIER_DEFAULTS = {
             "repository_file_count": 38,
             "family": "smolvlm",
             "requires_cuda": False,
-            "tiers": ["small", "mid", "big"],
+            "tiers": ["small"],
             "status": "ready",
             "prompt": "Describe only the visible subject, objects, text, and setting in one concise sentence. Do not guess or add details that are not clearly visible.",
             "max_new_tokens": 60,
@@ -164,6 +168,8 @@ MODEL_TIER_DEFAULTS = {
                 "vocab.json": 800662,
             },
         },
+    ],
+    "optional_models": [
         {
             "name": "Gemma 4 E4B-it",
             "purpose": "vision",
@@ -176,7 +182,8 @@ MODEL_TIER_DEFAULTS = {
             "repository_file_count": 9,
             "family": "gemma4",
             "requires_cuda": True,
-            "tiers": ["big"],
+            "for_tier": "big",
+            "setting_value": "gemma-4-E4B-it",
             "status": "untested",
             "prompt": "Describe this image in one or two sentences, focusing on what it depicts.",
             "max_new_tokens": 60,
@@ -254,11 +261,12 @@ def _model_cache_path(cache_dir, repo_id, revision):
 
 def find_model(repo_id):
     """Find a complete pinned model snapshot in app storage or the HF cache."""
-    config_path = get_config_path("model_tiers.json")
-    with open(config_path, encoding="utf-8-sig") as config_file:
-        config = json.load(config_file)
+    config = load_model_registry()
     model = next(
-        (item for item in config.get("models", []) if item.get("repo_id") == repo_id),
+        (
+            item for item in _all_models(config)
+            if item.get("repo_id") == repo_id
+        ),
         None,
     )
     if model is None or model.get("status") not in {"ready", "untested"}:
@@ -298,6 +306,122 @@ def find_model(repo_id):
     return None
 
 
+def load_model_registry(config_path=None):
+    path = config_path or get_config_path("model_tiers.json")
+    with open(path, encoding="utf-8-sig") as config_file:
+        return json.load(config_file)
+
+
+def _all_models(config):
+    return list(config.get("models", [])) + list(
+        config.get("optional_models", [])
+    )
+
+
+def get_big_vision_model_setting(settings_path=None):
+    """Return the configured big-tier model, defaulting to Gemma E2B."""
+    path = settings_path or get_config_path("settings.json")
+    try:
+        with open(path, encoding="utf-8-sig") as settings_file:
+            value = json.load(settings_file).get(
+                "big_vision_model", "gemma-4-E2B-it"
+            )
+    except (OSError, json.JSONDecodeError) as error:
+        from observability.logger import log
+
+        log(f"WARNING: Could not read big vision model setting: {error}")
+        return "gemma-4-E2B-it"
+
+    if value not in {"gemma-4-E2B-it", "gemma-4-E4B-it"}:
+        from observability.logger import log
+
+        log(
+            f"WARNING: Invalid big_vision_model {value!r}; "
+            "using gemma-4-E2B-it"
+        )
+        return "gemma-4-E2B-it"
+    return value
+
+
+def get_primary_vision_model_for_tier(
+    tier, config=None, big_vision_model=None
+):
+    registry = config or load_model_registry()
+    if tier == "big":
+        selected = (
+            big_vision_model
+            if big_vision_model is not None
+            else get_big_vision_model_setting()
+        )
+        if selected == "gemma-4-E4B-it":
+            return next(
+                (
+                    model for model in registry.get("optional_models", [])
+                    if model.get("setting_value") == selected
+                    and model.get("status") in {"ready", "untested"}
+                ),
+                None,
+            )
+
+    tier_config = registry.get("tiers", {}).get(tier, {})
+    repo_id = tier_config.get("vision_model_repo_id")
+    models = _all_models(registry)
+    if repo_id:
+        return next(
+            (
+                model for model in models
+                if model.get("repo_id") == repo_id
+                and model.get("purpose") == "vision"
+                and model.get("status") in {"ready", "untested"}
+            ),
+            None,
+        )
+    return next(
+        (
+            model for model in registry.get("models", [])
+            if model.get("purpose") == "vision"
+            and tier in model.get("tiers", [])
+            and model.get("status") in {"ready", "untested"}
+        ),
+        None,
+    )
+
+
+def get_required_models_for_tier(
+    tier, config=None, big_vision_model=None
+):
+    """Return only the embedding and primary vision model required by a tier."""
+    registry = config or load_model_registry()
+    embeddings = [
+        model for model in registry.get("models", [])
+        if model.get("purpose") == "embedding"
+        and tier in model.get("tiers", [])
+        and model.get("status") == "ready"
+    ]
+    vision = get_primary_vision_model_for_tier(
+        tier, registry, big_vision_model=big_vision_model
+    )
+    if len(embeddings) != 1 or vision is None:
+        raise ValueError(
+            f"Model registry does not define one embedding and one primary "
+            f"vision model for tier {tier!r}"
+        )
+    return embeddings + [vision]
+
+
+def get_min_free_disk_gb_for_tier(
+    tier, config=None, big_vision_model=None
+):
+    models = get_required_models_for_tier(
+        tier, config, big_vision_model=big_vision_model
+    )
+    required_bytes = sum(
+        int(model.get("download_size_bytes") or sum(model.get("files", {}).values()))
+        for model in models
+    )
+    return math.ceil(required_bytes * 1.5 / 1_000_000_000)
+
+
 def get_config_path(filename):
     """Return a config file path independent of the current working directory."""
     if getattr(sys, "frozen", False):
@@ -310,6 +434,7 @@ def get_config_path(filename):
         "settings.json": {
             "indexed_folders": [],
             "performance_tier": "auto",
+            "big_vision_model": "gemma-4-E2B-it",
         },
         "model_tiers.json": MODEL_TIER_DEFAULTS,
         "harness_limits.json": {

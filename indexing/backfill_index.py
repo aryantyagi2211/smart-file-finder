@@ -158,12 +158,17 @@ def cleanup_missing_files(indexed_folders=None):
     return removed
 
 
-def _warn_image_fallback(status_callback=None, reason=""):
+def _warn_image_fallback(status_callback=None, reason="", message=None):
     global _IMAGE_FALLBACK_WARNED
     if _IMAGE_FALLBACK_WARNED:
         return
     _IMAGE_FALLBACK_WARNED = True
-    message = "Image descriptions are unavailable - using file names only for now"
+    if message is None:
+        message = (
+            "Fallback model not downloaded - using file names only for now"
+            if reason == "fallback model not downloaded"
+            else "Image descriptions are unavailable - using file names only for now"
+        )
     log(f"WARNING: {message} ({reason})")
     if status_callback is not None:
         status_callback(message)
@@ -256,7 +261,12 @@ def index_one_file(file_path, force=False, status_callback=None,
         elif category == "image":
             can_describe, reason = image_description_status()
             if can_describe:
-                description = describe_image(path_str)
+                description = describe_image(
+                    path_str,
+                    status_callback=lambda message: _warn_image_fallback(
+                        status_callback, message=message
+                    ),
+                )
                 vision_model = get_active_vision_model()
                 if vision_model is not None:
                     vector = embed_text(description)

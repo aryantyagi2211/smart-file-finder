@@ -14,7 +14,12 @@ from huggingface_hub import snapshot_download
 from huggingface_hub import constants as _hub_constants
 from huggingface_hub.utils import tqdm as _hub_tqdm
 
-from app_paths import find_model, get_config_path, get_models_dir
+from app_paths import (
+    find_model,
+    get_config_path,
+    get_models_dir,
+    get_required_models_for_tier,
+)
 
 
 class ModelDownloadError(RuntimeError):
@@ -44,12 +49,11 @@ def _registry_models():
 
 
 def models_for_tier(tier):
-    """Return usable registry entries needed by a performance tier."""
-    return [
-        model for model in _registry_models()
-        if model.get("status") in {"ready", "untested"}
-        and tier in model.get("tiers", [])
-    ]
+    """Return exactly the embedding and primary vision model for a tier."""
+    config = json.loads(
+        Path(get_config_path("model_tiers.json")).read_text(encoding="utf-8-sig")
+    )
+    return get_required_models_for_tier(tier, config)
 
 
 def missing_models_for_tier(tier):

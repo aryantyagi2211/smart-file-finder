@@ -172,7 +172,7 @@ def test_image_without_local_cpu_model_uses_filename_without_loading_vision_mode
 
     assert "image filename only" in result
     assert notices == [
-        "Image descriptions are unavailable - using file names only for now"
+        "Fallback model not downloaded - using file names only for now"
     ]
     assert f"{normalize_path(image_path)}::filename" in collection.items
     assert not any(

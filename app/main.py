@@ -46,6 +46,7 @@ from indexing.backfill_index import (
 from pathlib import Path
 from app_paths import (
     ensure_config_exists,
+    get_big_vision_model_setting,
     get_hardware_profile_path,
     get_resource_path,
 )
@@ -194,6 +195,11 @@ class SmartFileFinderApp:
         try:
             profile = detect_hardware()
             override = get_performance_tier_override()
+            if get_big_vision_model_setting() == "gemma-4-E4B-it":
+                log(
+                    "WARNING: Gemma E4B is enabled for the big tier; "
+                    "this vision model is untested."
+                )
             tier, reason = choose_tier(profile, override)
         except Exception as error:
             log(f"Hardware profile or tier selection failed: {error}")

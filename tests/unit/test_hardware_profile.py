@@ -71,7 +71,7 @@ def test_low_disk_steps_down_one_tier_and_reports_reason():
 
     assert tier == "mid"
     assert "stepped down to mid" in reason
-    assert "42 GB minimum" in reason
+    assert "17 GB minimum" in reason
 
 
 def test_valid_override_wins_even_below_hardware_minimums(monkeypatch):
@@ -205,6 +205,32 @@ def test_missing_model_tier_config_is_created_with_defaults(
         "google/gemma-4-E2B-it (4-bit)"
     )
     assert (project / "config" / "model_tiers.json").is_file()
+
+
+def test_disk_minimums_follow_selected_required_model_payloads(
+    tmp_path, monkeypatch
+):
+    project = tmp_path / "source"
+    project.mkdir()
+    monkeypatch.setattr(app_paths, "__file__", str(project / "app_paths.py"))
+    monkeypatch.setattr(
+        hardware_profile, "get_config_path", app_paths.get_config_path
+    )
+
+    config = hardware_profile.load_tier_config()
+    assert {
+        tier: config["tiers"][tier]["min_free_disk_gb"]
+        for tier in ("small", "mid", "big")
+    } == {"small": 3, "mid": 17, "big": 17}
+
+    settings_path = app_paths.get_config_path("settings.json")
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    settings["big_vision_model"] = "gemma-4-E4B-it"
+    settings_path.write_text(json.dumps(settings), encoding="utf-8")
+
+    optional_config = hardware_profile.load_tier_config()
+    assert optional_config["tiers"]["big"]["min_free_disk_gb"] == 25
+    assert optional_config["tiers"]["mid"]["min_free_disk_gb"] == 17
 
 
 def test_settings_missing_file_defaults_to_auto(tmp_path, monkeypatch):

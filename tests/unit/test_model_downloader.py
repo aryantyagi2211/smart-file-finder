@@ -22,19 +22,33 @@ def tiny_registry(tmp_path, monkeypatch):
         "revision": "0123456789abcdef",
         "download_size_gb": 0.000000008,
         "download_size_bytes": 8,
+        "tiers": ["small", "mid", "big"],
+        "status": "ready",
+        "files": {"config.json": 4, "weights.bin": 4},
+    }
+    vision_model = {
+        "name": "tiny-test-vision",
+        "purpose": "vision",
+        "repo_id": "test/tiny-vision",
+        "revision": "abcdef0123456789",
+        "download_size_gb": 0.000000008,
+        "download_size_bytes": 8,
         "tiers": ["small"],
         "status": "ready",
         "files": {"config.json": 4, "weights.bin": 4},
     }
     config_path = tmp_path / "model_tiers.json"
-    config_path.write_text(json.dumps({"tiers": {}, "models": [model]}), encoding="utf-8")
+    config_path.write_text(json.dumps({
+        "tiers": {"small": {"vision_model_repo_id": vision_model["repo_id"]}},
+        "models": [model, vision_model],
+    }), encoding="utf-8")
     monkeypatch.setattr(app_paths, "get_config_path", lambda name: config_path)
     monkeypatch.setattr(model_downloader, "get_config_path", lambda name: config_path)
     monkeypatch.setattr(app_paths, "get_models_dir", lambda: models_dir)
     monkeypatch.setattr(model_downloader, "get_models_dir", lambda: models_dir)
     monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "default_hub_cache"))
     monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
-    return model, models_dir, config_path
+    return model, vision_model, models_dir, config_path
 
 
 def _write_snapshot(cache_dir, model):
@@ -53,9 +67,11 @@ def _write_snapshot(cache_dir, model):
 def test_missing_models_lists_only_models_without_complete_pinned_files(
     tiny_registry, monkeypatch
 ):
-    model, models_dir, _ = tiny_registry
+    model, vision_model, models_dir, _ = tiny_registry
 
-    assert model_downloader.missing_models_for_tier("small") == [model]
+    assert model_downloader.missing_models_for_tier("small") == [
+        model, vision_model
+    ]
     snapshot = _write_snapshot(models_dir, model)
     (snapshot / ".smart-file-finder-complete.json").write_text(
         json.dumps({"repo_id": model["repo_id"], "revision": model["revision"]}),
@@ -63,11 +79,20 @@ def test_missing_models_lists_only_models_without_complete_pinned_files(
     )
 
     assert app_paths.find_model(model["repo_id"]) == snapshot
+    assert model_downloader.missing_models_for_tier("small") == [vision_model]
+    vision_snapshot = _write_snapshot(models_dir, vision_model)
+    (vision_snapshot / ".smart-file-finder-complete.json").write_text(
+        json.dumps({
+            "repo_id": vision_model["repo_id"],
+            "revision": vision_model["revision"],
+        }),
+        encoding="utf-8",
+    )
     assert model_downloader.missing_models_for_tier("small") == []
 
 
 def test_incomplete_model_folder_is_not_reported_present(tiny_registry):
-    model, models_dir, _ = tiny_registry
+    model, _, models_dir, _ = tiny_registry
     snapshot = (
         models_dir
         / ("models--" + model["repo_id"].replace("/", "--"))
@@ -87,7 +112,7 @@ def test_incomplete_model_folder_is_not_reported_present(tiny_registry):
 def test_low_disk_space_refuses_before_writing_model(
     tiny_registry, monkeypatch
 ):
-    model, models_dir, _ = tiny_registry
+    model, _, models_dir, _ = tiny_registry
     monkeypatch.setattr(
         model_downloader.shutil,
         "disk_usage",
@@ -110,7 +135,7 @@ def test_low_disk_space_refuses_before_writing_model(
 def test_failed_download_can_be_retried_and_progress_is_monotonic(
     tiny_registry, monkeypatch
 ):
-    model, models_dir, _ = tiny_registry
+    model, _, models_dir, _ = tiny_registry
     attempts = []
 
     def fake_snapshot_download(
@@ -153,7 +178,7 @@ def test_failed_download_can_be_retried_and_progress_is_monotonic(
 
 
 def test_cancelled_download_is_not_reported_present(tiny_registry, monkeypatch):
-    model, _, _ = tiny_registry
+    model, _, _, _ = tiny_registry
     cancel_event = __import__("threading").Event()
 
     def fake_snapshot_download(
@@ -186,7 +211,7 @@ def test_download_requires_explicit_click_and_retries_missing_model(
 
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     app = QApplication.instance() or QApplication([])
-    model, _, _ = tiny_registry
+    model, _, _, _ = tiny_registry
     monkeypatch.setattr(setup_window, "find_model", lambda repo_id: None)
     calls = []
 
@@ -215,7 +240,7 @@ def test_startup_opens_setup_only_when_a_required_model_is_missing(
 ):
     from app import main as app_main
 
-    model, _, _ = tiny_registry
+    model, _, _, _ = tiny_registry
 
     class FakeSignal:
         def connect(self, callback):
@@ -271,7 +296,7 @@ def test_startup_opens_setup_only_when_a_required_model_is_missing(
     assert created[0].args[1] == [model]
 
 
-def test_model_registry_defaults_include_vision_candidates_and_untested_big_model(
+def test_model_registry_defaults_keep_untested_big_model_optional(
     tmp_path, monkeypatch
 ):
     project = tmp_path / "source"
@@ -285,31 +310,89 @@ def test_model_registry_defaults_include_vision_candidates_and_untested_big_mode
     assert any(
         model["status"] == "untested"
         and model["repo_id"] == "google/gemma-4-E4B-it"
-        for model in config["models"]
+        for model in config["optional_models"]
     )
     assert config["tiers"]["small"]["min_free_disk_gb"] == 3
-    assert config["tiers"]["mid"]["min_free_disk_gb"] == 18
-    assert config["tiers"]["big"]["min_free_disk_gb"] == 42
+    assert config["tiers"]["mid"]["min_free_disk_gb"] == 17
+    assert config["tiers"]["big"]["min_free_disk_gb"] == 17
 
 
-def test_tier_model_packs_include_vision_fallbacks_but_not_benchmark_candidates():
+def test_each_tier_requires_only_its_embedding_and_primary_vision_model():
     small = model_downloader.models_for_tier("small")
     mid = model_downloader.models_for_tier("mid")
     big = model_downloader.models_for_tier("big")
 
-    assert {
-        model["repo_id"] for model in mid
-    } == {
+    assert {model["repo_id"] for model in small} == {
         "sentence-transformers/all-mpnet-base-v2",
         "HuggingFaceTB/SmolVLM-500M-Instruct",
+    }
+    assert {model["repo_id"] for model in mid} == {
+        "sentence-transformers/all-mpnet-base-v2",
         "google/gemma-4-E2B-it",
     }
-    assert "HuggingFaceTB/SmolVLM-256M-Instruct" not in {
-        model["repo_id"] for model in small
+    assert {model["repo_id"] for model in big} == {
+        "sentence-transformers/all-mpnet-base-v2",
+        "google/gemma-4-E2B-it",
     }
-    assert "google/gemma-4-E4B-it" in {
+    assert "HuggingFaceTB/SmolVLM-500M-Instruct" not in {
+        model["repo_id"] for model in mid + big
+    }
+    assert "google/gemma-4-E4B-it" not in {
         model["repo_id"] for model in big
     }
+
+
+def test_optional_e4b_setting_replaces_big_primary_model(
+    tiny_registry, monkeypatch
+):
+    _, _, _, config_path = tiny_registry
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["tiers"]["big"] = {
+        "vision_model_repo_id": "google/gemma-4-E2B-it"
+    }
+    config["models"].append({
+        "name": "Gemma E2B",
+        "purpose": "vision",
+        "repo_id": "google/gemma-4-E2B-it",
+        "revision": "e2b",
+        "tiers": ["mid", "big"],
+        "status": "ready",
+        "files": {"config.json": 1},
+    })
+    config["optional_models"] = [{
+        "name": "Gemma E4B",
+        "purpose": "vision",
+        "repo_id": "google/gemma-4-E4B-it",
+        "revision": "e4b",
+        "for_tier": "big",
+        "setting_value": "gemma-4-E4B-it",
+        "status": "untested",
+        "files": {"config.json": 1},
+    }]
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    monkeypatch.setattr(
+        app_paths, "get_big_vision_model_setting",
+        lambda: "gemma-4-E4B-it",
+    )
+
+    required = model_downloader.models_for_tier("big")
+
+    assert {model["repo_id"] for model in required} == {
+        "test/tiny-model",
+        "google/gemma-4-E4B-it",
+    }
+
+
+def test_extra_cached_models_are_not_removed(tiny_registry):
+    _, _, models_dir, _ = tiny_registry
+    extra = models_dir / "models--cached--extra"
+    extra.mkdir()
+    marker = extra / "keep.txt"
+    marker.write_text("cached model", encoding="utf-8")
+
+    model_downloader.missing_models_for_tier("small")
+
+    assert marker.read_text(encoding="utf-8") == "cached model"
 
 
 def test_embedder_sets_offline_only_after_finding_local_model(monkeypatch, tmp_path):

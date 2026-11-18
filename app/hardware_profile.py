@@ -8,7 +8,12 @@ import platform
 import subprocess
 import sys
 
-from app_paths import get_base_dir, get_config_path
+from app_paths import (
+    get_base_dir,
+    get_big_vision_model_setting,
+    get_config_path,
+    get_min_free_disk_gb_for_tier,
+)
 from observability.logger import log
 
 _current_tier = "small"
@@ -147,6 +152,13 @@ def load_tier_config(config_path=None):
         config = json.load(config_file)
     if not isinstance(config.get("tiers"), dict):
         raise ValueError(f"Invalid model tier configuration in {path}")
+    selected_big_model = get_big_vision_model_setting()
+    for tier in _TIER_ORDER:
+        config["tiers"][tier]["min_free_disk_gb"] = (
+            get_min_free_disk_gb_for_tier(
+                tier, config, big_vision_model=selected_big_model
+            )
+        )
     return config
 
 

@@ -50,6 +50,7 @@ def test_missing_settings_file_is_created_with_empty_folder_defaults(
     assert json.loads(config_path.read_text(encoding="utf-8")) == {
         "indexed_folders": [],
         "performance_tier": "auto",
+        "big_vision_model": "gemma-4-E2B-it",
     }
     assert any("settings.json" in message for message in messages)
 

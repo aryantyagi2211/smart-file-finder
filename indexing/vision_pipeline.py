@@ -14,7 +14,12 @@ from transformers import (
 )
 
 from app.hardware_profile import get_current_tier
-from app_paths import find_model, get_config_path
+from app_paths import (
+    find_model,
+    get_big_vision_model_setting,
+    get_config_path,
+    get_primary_vision_model_for_tier,
+)
 from observability.logger import log
 
 MAX_IMAGE_DIMENSION = 768
@@ -30,35 +35,69 @@ _unavailable_models = set()
 
 def _load_vision_registry():
     with open(get_config_path("model_tiers.json"), encoding="utf-8-sig") as file:
-        return [
-            model for model in json.load(file).get("models", [])
-            if model.get("purpose") == "vision"
-        ]
+        return json.load(file)
 
 
-VISION_MODELS = _load_vision_registry()
+VISION_REGISTRY = _load_vision_registry()
+VISION_MODELS = [
+    model
+    for model in (
+        list(VISION_REGISTRY.get("models", []))
+        + list(VISION_REGISTRY.get("optional_models", []))
+    )
+    if model.get("purpose") == "vision"
+]
+_DEFAULT_VISION_MODELS = VISION_MODELS
+
+
+def _primary_vision_model(tier, models):
+    if models is _DEFAULT_VISION_MODELS:
+        return get_primary_vision_model_for_tier(
+            tier,
+            VISION_REGISTRY,
+            big_vision_model=get_big_vision_model_setting(),
+        )
+    return next(
+        (
+            model for model in models
+            if tier in model.get("tiers", [])
+            and model.get("status") in _VISION_STATUSES
+            and model.get("repo_id")
+        ),
+        None,
+    )
 
 
 def _iter_vision_models(tier, hardware, models=None):
     models = VISION_MODELS if models is None else models
+    use_registry = models is _DEFAULT_VISION_MODELS
     try:
         tier_index = _TIER_ORDER.index(tier)
     except ValueError:
         return
     available = bool(hardware.get("cuda_available"))
+    seen = set()
     for candidate_tier in reversed(_TIER_ORDER[:tier_index + 1]):
-        model = next(
-            (
-                item for item in models
-                if candidate_tier in item.get("tiers", [])
-                and item.get("status") in _VISION_STATUSES
-                and item.get("repo_id")
-            ),
-            None,
-        )
+        if use_registry:
+            model = get_primary_vision_model_for_tier(
+                candidate_tier,
+                VISION_REGISTRY,
+                big_vision_model=get_big_vision_model_setting(),
+            )
+        else:
+            model = next(
+                (
+                    item for item in models
+                    if candidate_tier in item.get("tiers", [])
+                    and item.get("status") in _VISION_STATUSES
+                    and item.get("repo_id")
+                ),
+                None,
+            )
         if model is not None and (
             available or not model.get("requires_cuda", False)
-        ):
+        ) and model.get("repo_id") not in seen:
+            seen.add(model["repo_id"])
             yield model
 
 
@@ -79,14 +118,23 @@ def _runtime_hardware():
 def image_description_status():
     """Return whether an installed model can describe images on this tier."""
     hardware = _runtime_hardware()
-    candidates = list(_iter_vision_models(get_current_tier(), hardware))
+    tier = get_current_tier()
+    models = VISION_MODELS
+    candidates = list(_iter_vision_models(tier, hardware, models))
+    primary = _primary_vision_model(tier, models)
+    primary_repo = primary.get("repo_id") if primary else None
+    missing_fallback = False
     for model in candidates:
         if model["repo_id"] in _unavailable_models:
             continue
         if find_model(model["repo_id"]) is not None:
             return True, ""
+        if model["repo_id"] != primary_repo:
+            missing_fallback = True
     if not candidates:
         return False, "no compatible vision model for the available hardware"
+    if missing_fallback:
+        return False, "fallback model not downloaded"
     return False, "no compatible pinned vision model is installed"
 
 
@@ -213,12 +261,17 @@ def get_active_vision_model():
     return _active_model_repo_id
 
 
-def describe_image(file_path):
+def describe_image(file_path, status_callback=None):
     """Describe an image locally, falling back through lower tiers if needed."""
     global _model, _processor, _loaded_model, _active_model_repo_id
     _active_model_repo_id = None
     hardware = _runtime_hardware()
-    candidates = list(_iter_vision_models(get_current_tier(), hardware))
+    tier = get_current_tier()
+    models = VISION_MODELS
+    candidates = list(_iter_vision_models(tier, hardware, models))
+    primary = _primary_vision_model(tier, models)
+    primary_repo = primary.get("repo_id") if primary else None
+    warned_missing_fallback = False
 
     try:
         with Image.open(file_path) as source:
@@ -235,6 +288,15 @@ def describe_image(file_path):
                 continue
             model_path = find_model(repo_id)
             if model_path is None:
+                if repo_id != primary_repo and not warned_missing_fallback:
+                    message = (
+                        "Fallback model not downloaded - using file names only for now"
+                    )
+                    if status_callback is not None:
+                        status_callback(message)
+                    else:
+                        log(f"WARNING: {message} ({repo_id})")
+                    warned_missing_fallback = True
                 continue
             try:
                 if _loaded_model != repo_id:

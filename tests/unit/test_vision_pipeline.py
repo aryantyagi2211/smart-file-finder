@@ -186,6 +186,51 @@ def test_vision_failures_fall_through_to_filename_only_without_retrying(
     vision_pipeline.reset_vision_state()
 
 
+def test_missing_local_fallback_uses_filename_only_and_never_downloads(
+    tmp_path, monkeypatch
+):
+    big = _model(
+        "big/repo", "big", "gemma4",
+        requires_cuda=True, status="untested",
+    )
+    small = _model("small/repo", "small", "smolvlm")
+    image_path = tmp_path / "fallback-absent.png"
+    Image.new("RGB", (4, 4), "red").save(image_path)
+    callbacks = []
+    download_calls = []
+
+    def fail_big(model_entry, *_args):
+        if model_entry is big:
+            raise RuntimeError("simulated primary load failure")
+        raise AssertionError("an absent model must not be loaded")
+
+    monkeypatch.setattr(vision_pipeline, "VISION_MODELS", [small, big])
+    monkeypatch.setattr(vision_pipeline, "get_current_tier", lambda: "big")
+    monkeypatch.setattr(
+        vision_pipeline, "_runtime_hardware",
+        lambda: {"cuda_available": True},
+    )
+    monkeypatch.setattr(
+        vision_pipeline, "find_model",
+        lambda repo: tmp_path if repo == big["repo_id"] else None,
+    )
+    monkeypatch.setattr(vision_pipeline, "_load_model", fail_big)
+    monkeypatch.setattr(
+        "indexing.model_downloader.download_model",
+        lambda *args, **kwargs: download_calls.append(args),
+    )
+    vision_pipeline.reset_vision_state()
+
+    assert vision_pipeline.describe_image(
+        image_path, status_callback=callbacks.append
+    ) == "fallback-absent"
+    assert callbacks == [
+        "Fallback model not downloaded - using file names only for now"
+    ]
+    assert download_calls == []
+    vision_pipeline.reset_vision_state()
+
+
 def test_runtime_out_of_memory_steps_down_to_small_model(tmp_path, monkeypatch):
     mid = _model(
         "google/gemma-4-E2B-it", "mid", "gemma4",
@@ -241,7 +286,8 @@ def test_image_indexing_records_description_model(tmp_path, monkeypatch):
         backfill_index, "image_description_status", lambda: (True, "")
     )
     monkeypatch.setattr(
-        backfill_index, "describe_image", lambda _path: "a short caption"
+        backfill_index, "describe_image",
+        lambda _path, **_kwargs: "a short caption"
     )
     monkeypatch.setattr(
         backfill_index, "get_active_vision_model", lambda: model_id
