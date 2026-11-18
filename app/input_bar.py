@@ -53,9 +53,10 @@ class DragHandle(QWidget):
 
 
 class InputBar(QWidget):
-    def __init__(self, on_submit):
+    def __init__(self, on_submit, on_escape=None):
         super().__init__()
         self.on_submit = on_submit
+        self.on_escape = on_escape
         self._remembered_pos = None
         self._setup_ui()
 
@@ -114,6 +115,8 @@ class InputBar(QWidget):
 
     def keyPressEvent(self, event: QKeyEvent):
         if event.key() == Qt.Key.Key_Escape:
+            if self.on_escape is not None:
+                self.on_escape()
             self.hide()
         else:
             super().keyPressEvent(event)

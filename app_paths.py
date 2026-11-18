@@ -199,6 +199,69 @@ MODEL_TIER_DEFAULTS = {
                 "tokenizer_config.json": 3082,
             },
         },
+        {
+            "name": "Whisper tiny.en",
+            "purpose": "voice",
+            "repo_id": "Systran/faster-whisper-tiny.en",
+            "revision": "0d3d19a32d3338f10357c0889762bd8d64bbdeba",
+            "download_size_gb": 0.078090594,
+            "download_size_bytes": 78090594,
+            "tiers": ["small"],
+            "status": "ready",
+            "license": "mit",
+            "gated": False,
+            "language": "en",
+            "engine": "faster-whisper",
+            "compute_type": "int8",
+            "files": {
+                "config.json": 2317,
+                "model.bin": 75537502,
+                "tokenizer.json": 2128466,
+                "vocabulary.txt": 422309,
+            },
+        },
+        {
+            "name": "Whisper base.en",
+            "purpose": "voice",
+            "repo_id": "Systran/faster-whisper-base.en",
+            "revision": "3d3d5dee26484f91867d81cb899cfcf72b96be6c",
+            "download_size_gb": 0.14776951,
+            "download_size_bytes": 147769510,
+            "tiers": ["mid"],
+            "status": "ready",
+            "license": "mit",
+            "gated": False,
+            "language": "en",
+            "engine": "faster-whisper",
+            "compute_type": "int8",
+            "files": {
+                "config.json": 2227,
+                "model.bin": 145216508,
+                "tokenizer.json": 2128466,
+                "vocabulary.txt": 422309,
+            },
+        },
+        {
+            "name": "Whisper small.en",
+            "purpose": "voice",
+            "repo_id": "Systran/faster-whisper-small.en",
+            "revision": "d1d751a5f8271d482d14ca55d9e2deeebbae577f",
+            "download_size_gb": 0.486098798,
+            "download_size_bytes": 486098798,
+            "tiers": ["big"],
+            "status": "ready",
+            "license": "mit",
+            "gated": False,
+            "language": "en",
+            "engine": "faster-whisper",
+            "compute_type": "int8",
+            "files": {
+                "config.json": 2657,
+                "model.bin": 483545366,
+                "tokenizer.json": 2128466,
+                "vocabulary.txt": 422309,
+            },
+        },
     ],
 }
 
@@ -409,6 +472,19 @@ def get_required_models_for_tier(
     return embeddings + [vision]
 
 
+def get_voice_model_for_tier(tier, config=None):
+    registry = config or load_model_registry()
+    return next(
+        (
+            model for model in _all_models(registry)
+            if model.get("purpose") == "voice"
+            and tier in model.get("tiers", [])
+            and model.get("status") == "ready"
+        ),
+        None,
+    )
+
+
 def get_min_free_disk_gb_for_tier(
     tier, config=None, big_vision_model=None
 ):
@@ -435,6 +511,9 @@ def get_config_path(filename):
             "indexed_folders": [],
             "performance_tier": "auto",
             "big_vision_model": "gemma-4-E2B-it",
+            "voice_enabled": True,
+            "voice_hold_ms": 400,
+            "voice_max_seconds": 15,
         },
         "model_tiers.json": MODEL_TIER_DEFAULTS,
         "harness_limits.json": {

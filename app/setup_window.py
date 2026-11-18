@@ -32,10 +32,12 @@ class SetupWindow(QWidget):
     ready = pyqtSignal()
     cancelled = pyqtSignal()
 
-    def __init__(self, tier, models, free_disk_gb=None, parent=None):
+    def __init__(self, tier, models, free_disk_gb=None, parent=None,
+                 purpose="setup"):
         super().__init__(parent)
         self.tier = tier
         self.models = list(models)
+        self.purpose = purpose
         self._progress_values = [0 for _ in self.models]
         self._totals = [
             int(model.get("download_size_bytes") or sum(model.get("files", {}).values()))
@@ -108,7 +110,11 @@ class SetupWindow(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(26, 24, 26, 22)
         layout.setSpacing(12)
-        heading = QLabel("Setting up Smart File Finder")
+        heading = QLabel(
+            "Download Voice Model"
+            if purpose == "voice"
+            else "Setting up Smart File Finder"
+        )
         heading.setObjectName("heading")
         layout.addWidget(heading)
 
@@ -119,20 +125,36 @@ class SetupWindow(QWidget):
             if free_disk_gb is not None
             else "unknown"
         )
-        detail = QLabel(
-            f"The {tier} tier needs these model files: {names}. "
-            f"Total download: {_format_mb(total_bytes)}. "
-            f"Free disk space: {free_text}."
-        )
+        if purpose == "voice":
+            detail = QLabel(
+                f"Hold-to-talk needs {names}. "
+                f"Total download: {_format_mb(total_bytes)}. "
+                f"Free disk space: {free_text}. "
+                "The English-only model runs locally."
+            )
+        else:
+            detail = QLabel(
+                f"The {tier} tier needs these model files: {names}. "
+                f"Total download: {_format_mb(total_bytes)}. "
+                f"Free disk space: {free_text}."
+            )
         detail.setObjectName("detail")
         detail.setWordWrap(True)
         layout.addWidget(detail)
 
-        privacy = QLabel(
-            "The only network use is downloading public model files from "
-            "Hugging Face once. No user file, query or telemetry is ever "
-            "sent. After setup the app works fully offline."
-        )
+        if purpose == "voice":
+            privacy = QLabel(
+                "Audio stays in memory only, is never written to disk or "
+                "sent anywhere, and is discarded after transcription. "
+                "The only network use is the one-time public voice model "
+                "download from Hugging Face."
+            )
+        else:
+            privacy = QLabel(
+                "The only network use is downloading public model files from "
+                "Hugging Face once. No user file, query or telemetry is ever "
+                "sent. After setup the app works fully offline."
+            )
         privacy.setObjectName("detail")
         privacy.setWordWrap(True)
         layout.addWidget(privacy)

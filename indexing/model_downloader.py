@@ -19,6 +19,7 @@ from app_paths import (
     get_config_path,
     get_models_dir,
     get_required_models_for_tier,
+    get_voice_model_for_tier,
 )
 
 
@@ -63,6 +64,13 @@ def missing_models_for_tier(tier):
         if find_model(model["repo_id"]) is None:
             missing.append(model)
     return missing
+
+
+def missing_voice_model_for_tier(tier):
+    model = get_voice_model_for_tier(tier)
+    if model is None or find_model(model["repo_id"]) is not None:
+        return None
+    return model
 
 
 def _snapshot_path(cache_dir, repo_id, revision):

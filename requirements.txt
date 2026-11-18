@@ -15,3 +15,6 @@ qtawesome
 pillow
 psutil
 huggingface_hub
+faster-whisper
+sounddevice
+numpy

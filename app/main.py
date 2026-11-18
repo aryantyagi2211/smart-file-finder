@@ -30,7 +30,14 @@ from PyQt6.QtCore import QObject, pyqtSignal, Qt
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
-from app.hotkey_listener import register_hotkey, DEFAULT_HOTKEY
+from app.hotkey_listener import (
+    DEFAULT_HOTKEY,
+    register_tap_hold_hotkey,
+)
+from app.voice_hotkey import VoiceGesture
+from app.voice_recorder import VoiceRecorder, VoiceRecorderError
+from app.voice_transcriber import VoiceTranscriber
+from app.voice_pill import VoicePill
 from app.input_bar import InputBar
 from app.command_parser import parse_command, Command, should_auto_open
 from app.query_handler import handle_query
@@ -49,6 +56,8 @@ from app_paths import (
     get_big_vision_model_setting,
     get_hardware_profile_path,
     get_resource_path,
+    get_config_path,
+    get_voice_model_for_tier,
 )
 from app.hardware_profile import (
     choose_tier,
@@ -59,6 +68,7 @@ from app.hardware_profile import (
 from app.setup_window import SetupWindow
 from indexing.model_downloader import (
     missing_models_for_tier,
+    missing_voice_model_for_tier,
     set_huggingface_offline,
 )
 
@@ -89,6 +99,12 @@ class ProgressBridge(QObject):
 
 class HardwareTierBridge(QObject):
     ready = pyqtSignal(str, str, object)
+
+
+class VoiceBridge(QObject):
+    state = pyqtSignal(str)
+    text = pyqtSignal(str)
+    error = pyqtSignal(str)
 
 
 class LiveIndexHandler(FileSystemEventHandler):
@@ -145,14 +161,46 @@ class SmartFileFinderApp:
         )
         self.performance_tier_action.setEnabled(False)
         tray_menu.addSeparator()
+        self.voice_action = tray_menu.addAction("Voice search: On")
+        self.voice_action.triggered.connect(self._toggle_voice)
+        tray_menu.addSeparator()
         quit_action = tray_menu.addAction("Quit")
         quit_action.triggered.connect(self.app.quit)
 
         self.tray_icon.setContextMenu(tray_menu)
         self.tray_icon.show()
-        self.input_bar = InputBar(on_submit=self._on_query_submitted)
+        self.input_bar = InputBar(
+            on_submit=self._on_query_submitted,
+            on_escape=self._cancel_voice,
+        )
         self.result_card = None
         self.options_group = None
+        self.voice_pill = VoicePill(anchor=self.input_bar)
+        self.voice_bridge = VoiceBridge()
+        self.voice_bridge.state.connect(self._on_voice_state)
+        self.voice_bridge.text.connect(self._on_voice_text)
+        self.voice_bridge.error.connect(self._on_voice_error)
+        self.voice_recorder = VoiceRecorder(
+            max_seconds=self._load_voice_setting("voice_max_seconds", 15)
+        )
+        self.voice_transcriber = None
+        self._voice_tier = None
+        self.voice_available = self._check_voice_imports()
+        self.voice_enabled = (
+            self.voice_available
+            and self._load_voice_setting("voice_enabled", True)
+        )
+        log(
+            "Voice search: on"
+            if self.voice_enabled
+            else "Voice search: off"
+            if self.voice_available
+            else "Voice search is not available on this device yet"
+        )
+        self._hotkey_unregister = None
+        self._recording = False
+        self._voice_setup_window = None
+        self._update_voice_tray_action()
 
         self.hotkey_bridge = HotkeyBridge()
         self.hotkey_bridge.triggered.connect(self._actually_show_input_bar)
@@ -186,6 +234,59 @@ class SmartFileFinderApp:
             preload_model()
         except Exception as error:
             log(f"Embedding model preload failed; it will retry on use: {error}")
+
+    def _load_voice_setting(self, key, default):
+        try:
+            with open(get_config_path("settings.json"), encoding="utf-8-sig") as file:
+                return json.load(file).get(key, default)
+        except Exception as error:
+            log(f"WARNING: Could not read voice setting {key}: {error}")
+            return default
+
+    def _save_voice_setting(self, key, value):
+        path = get_config_path("settings.json")
+        try:
+            with open(path, encoding="utf-8-sig") as file:
+                settings = json.load(file)
+        except Exception:
+            settings = {}
+        settings[key] = value
+        temporary = path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(path)
+
+    def _check_voice_imports(self):
+        missing = []
+        for module_name in ("faster_whisper", "ctranslate2", "sounddevice", "numpy"):
+            try:
+                __import__(module_name)
+            except Exception:
+                missing.append(module_name)
+        if missing:
+            log(
+                "Voice search is not available on this device yet: "
+                f"missing imports: {', '.join(missing)}"
+            )
+            return False
+        return True
+
+    def _update_voice_tray_action(self):
+        if not self.voice_available:
+            self.voice_action.setText(
+                "Voice search is not available on this device yet"
+            )
+            self.voice_action.setEnabled(False)
+        else:
+            self.voice_action.setText(
+                f"Voice search: {'On' if self.voice_enabled else 'Off'}"
+            )
+
+    def _toggle_voice(self):
+        if not self.voice_available:
+            return
+        self.voice_enabled = not self.voice_enabled
+        self._save_voice_setting("voice_enabled", self.voice_enabled)
+        self._update_voice_tray_action()
 
     def _detect_hardware_in_background(self):
         profile = {}
@@ -236,6 +337,7 @@ class SmartFileFinderApp:
 
     def _on_hardware_tier_ready(self, tier, mode, free_disk_gb):
         set_current_tier(tier)
+        self._voice_tier = tier
         display_tier = tier.capitalize()
         self.performance_tier_action.setText(
             f"Performance tier: {display_tier} ({mode})"
@@ -299,7 +401,18 @@ class SmartFileFinderApp:
         self.status_window.mark_complete()
         self.status_window.hide()
         self._start_watchers()
-        register_hotkey(self._show_input_bar, DEFAULT_HOTKEY)
+        hold_ms = int(self._load_voice_setting("voice_hold_ms", 400))
+        if self.voice_enabled:
+            self._hotkey_unregister = register_tap_hold_hotkey(
+                self._on_voice_hotkey_event,
+                hold_threshold_ms=hold_ms,
+                max_hold_ms=int(
+                    self._load_voice_setting("voice_max_seconds", 15)
+                ) * 1000,
+            )
+        else:
+            from app.hotkey_listener import register_hotkey
+            register_hotkey(self._show_input_bar, DEFAULT_HOTKEY)
         print(f"Smart File Finder running. Press {DEFAULT_HOTKEY} to search.")
 
     def _start_watchers(self):
@@ -314,6 +427,143 @@ class SmartFileFinderApp:
             observer.daemon = True
             observer.start()
             print(f"Watching for changes in: {folder}")
+
+    def _on_voice_hotkey_event(self, gesture):
+        if gesture == VoiceGesture.TAP:
+            self.hotkey_bridge.triggered.emit()
+        elif gesture == VoiceGesture.HOLD_START:
+            self.voice_bridge.state.emit("hold_start")
+        elif gesture == VoiceGesture.HOLD_END:
+            self.voice_bridge.state.emit("hold_end")
+
+    def _on_voice_state(self, state):
+        if state == "hold_start":
+            self._start_voice_recording()
+        elif state == "hold_end":
+            self._finish_voice_recording()
+
+    def _start_voice_recording(self):
+        if not self.voice_enabled or self._recording:
+            return
+        if self._voice_tier is None:
+            self._on_voice_error("Voice search is not available yet")
+            return
+        model = missing_voice_model_for_tier(self._voice_tier)
+        if model is not None:
+            free_disk = self._load_voice_setting("free_disk_unused", None)
+            try:
+                import psutil
+                free_disk = psutil.disk_usage(str(get_config_path("settings.json").parent)).free / 1e9
+            except Exception:
+                pass
+            self._voice_setup_window = SetupWindow(
+                self._voice_tier,
+                [model],
+                free_disk,
+                purpose="voice",
+            )
+            self._voice_setup_window.ready.connect(self._on_voice_model_ready)
+            self._voice_setup_window.cancelled.connect(self._on_voice_setup_cancelled)
+            self._voice_setup_window.show()
+            return
+        try:
+            model_entry = get_voice_model_for_tier(self._voice_tier)
+            model_path = None
+            if model_entry is not None:
+                from app_paths import find_model
+                model_path = find_model(model_entry["repo_id"])
+            if model_path is None:
+                raise VoiceRecorderError(
+                    "Voice model is missing. Voice stays off until it is downloaded."
+                )
+            if self.voice_transcriber is None:
+                self.voice_transcriber = VoiceTranscriber(model_path=model_path)
+            self.voice_recorder.start()
+            self._recording = True
+            self.input_bar.show_and_focus()
+            self.voice_pill.show_listening()
+        except VoiceRecorderError as error:
+            self._on_voice_error(str(error))
+        except Exception as error:
+            log(f"Could not start voice recording: {error}")
+            self._on_voice_error(
+                "Could not open the microphone. Check your audio device."
+            )
+
+    def _on_voice_model_ready(self):
+        self._voice_setup_window = None
+        self._start_voice_recording()
+
+    def _on_voice_setup_cancelled(self):
+        self._voice_setup_window = None
+        self.voice_enabled = False
+        self._save_voice_setting("voice_enabled", False)
+        self._update_voice_tray_action()
+        self._on_voice_error("Voice search: cancelled")
+
+    def _finish_voice_recording(self):
+        if not self._recording:
+            return
+        self._recording = False
+        try:
+            audio = self.voice_recorder.stop()
+        except Exception as error:
+            self._on_voice_error(str(error))
+            return
+        if audio is None:
+            self.voice_pill.show_error("Didn't catch that, try again")
+            threading.Timer(1.5, self.voice_pill.hide_status).start()
+            return
+        self.voice_pill.show_transcribing()
+        worker = threading.Thread(
+            target=self._transcribe_voice_audio,
+            args=(audio,),
+            daemon=True,
+            name="voice-transcription",
+        )
+        worker.start()
+
+    def _transcribe_voice_audio(self, audio):
+        try:
+            text = self.voice_transcriber.transcribe(audio)
+        except Exception as error:
+            log(f"Voice transcription failed: {error}")
+            self.voice_bridge.error.emit(
+                "Could not transcribe that recording."
+            )
+            return
+        finally:
+            try:
+                audio.fill(0)
+            except Exception:
+                pass
+        self.voice_bridge.text.emit(text)
+
+    def _on_voice_text(self, text):
+        self.voice_pill.hide_status()
+        if not text:
+            self.voice_pill.show_error("Didn't catch that, try again")
+            threading.Timer(1.5, self.voice_pill.hide_status).start()
+            return
+        self.input_bar.text_input.setText(text)
+        self.input_bar.show_and_focus()
+        self._on_query_submitted(text)
+
+    def _on_voice_error(self, message):
+        self._recording = False
+        try:
+            self.voice_recorder.cancel()
+        except Exception:
+            pass
+        log(f"Voice search error: {message}")
+        self.voice_pill.show_error(message)
+        threading.Timer(2.5, self.voice_pill.hide_status).start()
+
+    def _cancel_voice(self):
+        if self._recording:
+            self._recording = False
+            self.voice_recorder.cancel()
+            self.voice_pill.hide_status()
 
     def _show_input_bar(self):
         self.hotkey_bridge.triggered.emit()
