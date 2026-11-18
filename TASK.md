@@ -38,3 +38,10 @@ Status: **Done** — unit and integration tests, the golden-set evaluation, thre
 ## Current status
 
 Feature 1 is implemented and validated with confidence threshold `0.55`, ambiguity margin `0.07`, options floor `0.48`, maximum options `3`, minimum additional-card score `0.50`, and option score window `0.03`. Both confident and uncertain results use the compact reference card style; confident cards and the 1-3-card uncertain stack are movable. The full desktop UI has not yet been visually verified interactively.
+
+## Device tiers
+
+1. **Hardware detection and tier choice — Done.** Detect RAM, disk, CPU, architecture, OS and NVIDIA GPU; select or override small/mid/big. Keep embeddings fixed at `all-mpnet-base-v2`.
+2. **Model packs and first-run downloader — Open.** Add a downloader with progress UI.
+3. **Vision model per tier — Open.** Choose and wire a vision model for each tier.
+4. **Whisper size per tier — Open.** Apply the noted Whisper model size when voice search is implemented.

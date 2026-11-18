@@ -35,5 +35,7 @@ Feature 1 (top-three pick list) is implemented: confident queries return one fil
 
 Planned work:
 
-- Feature 2: device tiers with one installer, first-run hardware detection, and model packs; keep embeddings fixed.
+- Device tiers keep embeddings fixed at `all-mpnet-base-v2` for every tier so existing vector indexes remain compatible. Tiers are only for future vision, voice, and optional summarizer choices.
+- First-guess auto-tier minimums: big = 24 GB RAM, 12 GB NVIDIA VRAM, 20 GB free disk; mid = 12 GB RAM, 4 GB NVIDIA VRAM, 8 GB free disk; small is the fallback.
+- Feature 2: device tiers with one installer, first-run hardware detection, and model packs.
 - Feature 3: voice search, English-only initially, using local Whisper.

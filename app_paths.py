@@ -46,6 +46,11 @@ def get_base_dir():
     return base_dir
 
 
+def get_hardware_profile_path():
+    """Return the writable path used to persist the latest hardware report."""
+    return get_base_dir() / "hardware_profile.json"
+
+
 def get_config_path(filename):
     """Return a config file path independent of the current working directory."""
     if getattr(sys, "frozen", False):
@@ -55,7 +60,38 @@ def get_config_path(filename):
 
     config_path = config_dir / filename
     defaults = {
-        "settings.json": {"indexed_folders": []},
+        "settings.json": {
+            "indexed_folders": [],
+            "performance_tier": "auto",
+        },
+        "model_tiers.json": {
+            "tiers": {
+                "big": {
+                    "min_ram_gb": 24,
+                    "min_vram_gb": 12,
+                    "min_free_disk_gb": 20,
+                    "vision_model": "Larger vision model (to be decided later)",
+                    "whisper_model_size": "small/medium",
+                    "summarizer": "yes",
+                },
+                "mid": {
+                    "min_ram_gb": 12,
+                    "min_vram_gb": 4,
+                    "min_free_disk_gb": 8,
+                    "vision_model": "google/gemma-4-E2B-it (4-bit)",
+                    "whisper_model_size": "base",
+                    "summarizer": "yes",
+                },
+                "small": {
+                    "min_ram_gb": 0,
+                    "min_vram_gb": 0,
+                    "min_free_disk_gb": 0,
+                    "vision_model": "Tiny CPU-friendly option (to be decided later)",
+                    "whisper_model_size": "tiny",
+                    "summarizer": "no",
+                },
+            }
+        },
         "harness_limits.json": {
             "max_reformulations": 2,
             "timeout_seconds": 5,
@@ -84,6 +120,7 @@ def ensure_config_exists():
     """Ensure the runtime configuration files exist with usable defaults."""
     get_config_path("settings.json")
     get_config_path("harness_limits.json")
+    get_config_path("model_tiers.json")
 
 
 def get_resource_path(filename):

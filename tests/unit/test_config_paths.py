@@ -48,7 +48,8 @@ def test_missing_settings_file_is_created_with_empty_folder_defaults(
     config_path = app_paths.get_config_path("settings.json")
 
     assert json.loads(config_path.read_text(encoding="utf-8")) == {
-        "indexed_folders": []
+        "indexed_folders": [],
+        "performance_tier": "auto",
     }
     assert any("settings.json" in message for message in messages)
 

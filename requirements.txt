@@ -13,3 +13,4 @@ accelerate
 python-docx
 qtawesome
 pillow
+psutil

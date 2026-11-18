@@ -1,5 +1,6 @@
 {
   "indexed_folders": [
     "test_data"
-  ]
+  ],
+  "performance_tier": "auto"
 }

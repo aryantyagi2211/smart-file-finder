@@ -12,6 +12,7 @@ so blocking app startup on a full scan is a bad experience).
 import sys
 import threading
 import os
+import json
 
 if __name__ == "__main__":
     from app.instance_lock import acquire_single_instance_lock
@@ -40,7 +41,17 @@ from indexing.backfill_index import (
     remove_file_index,
 )
 from pathlib import Path
-from app_paths import ensure_config_exists, get_resource_path
+from app_paths import (
+    ensure_config_exists,
+    get_hardware_profile_path,
+    get_resource_path,
+)
+from app.hardware_profile import (
+    choose_tier,
+    detect_hardware,
+    get_performance_tier_override,
+    set_current_tier,
+)
 
 
 from PyQt6.QtWidgets import QSystemTrayIcon, QMenu
@@ -64,6 +75,10 @@ class ProgressBridge(QObject):
     progress_updated = pyqtSignal(str, str, int, int)
     error_occurred = pyqtSignal(str)
     model_loading = pyqtSignal()
+
+
+class HardwareTierBridge(QObject):
+    ready = pyqtSignal(str, str)
 
 
 class LiveIndexHandler(FileSystemEventHandler):
@@ -114,6 +129,12 @@ class SmartFileFinderApp:
         tray_menu = QMenu()
         show_action = tray_menu.addAction("Search (Ctrl+Shift+Space)")
         show_action.triggered.connect(self._show_input_bar)
+        tray_menu.addSeparator()
+        self.performance_tier_action = tray_menu.addAction(
+            "Performance tier: Detecting..."
+        )
+        self.performance_tier_action.setEnabled(False)
+        tray_menu.addSeparator()
         quit_action = tray_menu.addAction("Quit")
         quit_action.triggered.connect(self.app.quit)
 
@@ -137,6 +158,15 @@ class SmartFileFinderApp:
         self.progress_bridge.error_occurred.connect(self.status_window.show_error)
         self.progress_bridge.model_loading.connect(self.status_window.show_loading_model)
 
+        self.hardware_tier_bridge = HardwareTierBridge()
+        self.hardware_tier_bridge.ready.connect(self._on_hardware_tier_ready)
+        self._hardware_detection_thread = threading.Thread(
+            target=self._detect_hardware_in_background,
+            daemon=True,
+            name="hardware-profile",
+        )
+        self._hardware_detection_thread.start()
+
         self._embedding_warmup_thread = threading.Thread(
             target=self._preload_embedding_model,
             daemon=True,
@@ -152,6 +182,53 @@ class SmartFileFinderApp:
             preload_model()
         except Exception as error:
             log(f"Embedding model preload failed; it will retry on use: {error}")
+
+    def _detect_hardware_in_background(self):
+        profile = {}
+        override = "auto"
+        tier = "small"
+        reason = "small: hardware detection did not complete"
+        try:
+            profile = detect_hardware()
+            override = get_performance_tier_override()
+            tier, reason = choose_tier(profile, override)
+        except Exception as error:
+            log(f"Hardware profile or tier selection failed: {error}")
+
+        report = {
+            "hardware": profile,
+            "performance_tier": tier,
+            "override": override,
+            "reason": reason,
+        }
+        try:
+            profile_path = get_hardware_profile_path()
+            temporary_path = profile_path.with_suffix(".json.tmp")
+            temporary_path.write_text(
+                json.dumps(report, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            temporary_path.replace(profile_path)
+        except Exception as error:
+            log(f"Could not save hardware profile: {error}")
+
+        log(f"Hardware profile: {json.dumps(profile, sort_keys=True)}")
+        log(f"Performance tier selected: {tier} ({reason})")
+        normalized_override = str(override or "auto").strip().casefold()
+        mode = (
+            "auto"
+            if normalized_override in ("", "auto")
+            or normalized_override not in ("small", "mid", "big")
+            else "override"
+        )
+        self.hardware_tier_bridge.ready.emit(tier, mode)
+
+    def _on_hardware_tier_ready(self, tier, mode):
+        set_current_tier(tier)
+        display_tier = tier.capitalize()
+        self.performance_tier_action.setText(
+            f"Performance tier: {display_tier} ({mode})"
+        )
 
     def _run_initial_backfill(self):
         print("Indexing files, please wait...")
