@@ -6,6 +6,8 @@ per test (via pytest's tmp_path fixture) so these tests never touch the
 real project metadata.db.
 """
 
+import sqlite3
+
 from storage.metadata_store import (
     init_db,
     init_chunks_table,
@@ -72,3 +74,32 @@ def test_save_and_get_chunks(tmp_path):
     result = get_chunks("doc.pdf", db_path=db_path)
 
     assert result == ["chunk one", "chunk two", "chunk three"]
+
+
+def test_legacy_database_migrates_vision_model_column(tmp_path):
+    db_path = tmp_path / "legacy.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE files (
+                path TEXT PRIMARY KEY,
+                file_type TEXT NOT NULL,
+                indexed_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO files VALUES (?, ?, ?)",
+            ("/tmp/legacy.png", "image", "2026-01-01T00:00:00"),
+        )
+
+    init_db(db_path)
+    save_file_metadata(
+        "/tmp/legacy.png",
+        "image",
+        vision_model="HuggingFaceTB/SmolVLM-500M-Instruct",
+        db_path=db_path,
+    )
+
+    metadata = get_file_metadata("/tmp/legacy.png", db_path=db_path)
+    assert metadata["vision_model"] == "HuggingFaceTB/SmolVLM-500M-Instruct"

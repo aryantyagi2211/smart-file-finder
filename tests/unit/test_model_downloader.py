@@ -271,7 +271,7 @@ def test_startup_opens_setup_only_when_a_required_model_is_missing(
     assert created[0].args[1] == [model]
 
 
-def test_model_registry_defaults_include_ready_and_planned_models(
+def test_model_registry_defaults_include_vision_candidates_and_untested_big_model(
     tmp_path, monkeypatch
 ):
     project = tmp_path / "source"
@@ -281,9 +281,35 @@ def test_model_registry_defaults_include_ready_and_planned_models(
     config_path = app_paths.get_config_path("model_tiers.json")
     config = json.loads(config_path.read_text(encoding="utf-8"))
 
-    assert len([model for model in config["models"] if model["status"] == "ready"]) == 2
-    assert any(model["status"] == "planned" for model in config["models"])
-    assert config["tiers"]["mid"]["min_free_disk_gb"] == 17
+    assert len([model for model in config["models"] if model["status"] == "ready"]) == 4
+    assert any(
+        model["status"] == "untested"
+        and model["repo_id"] == "google/gemma-4-E4B-it"
+        for model in config["models"]
+    )
+    assert config["tiers"]["small"]["min_free_disk_gb"] == 3
+    assert config["tiers"]["mid"]["min_free_disk_gb"] == 18
+    assert config["tiers"]["big"]["min_free_disk_gb"] == 42
+
+
+def test_tier_model_packs_include_vision_fallbacks_but_not_benchmark_candidates():
+    small = model_downloader.models_for_tier("small")
+    mid = model_downloader.models_for_tier("mid")
+    big = model_downloader.models_for_tier("big")
+
+    assert {
+        model["repo_id"] for model in mid
+    } == {
+        "sentence-transformers/all-mpnet-base-v2",
+        "HuggingFaceTB/SmolVLM-500M-Instruct",
+        "google/gemma-4-E2B-it",
+    }
+    assert "HuggingFaceTB/SmolVLM-256M-Instruct" not in {
+        model["repo_id"] for model in small
+    }
+    assert "google/gemma-4-E4B-it" in {
+        model["repo_id"] for model in big
+    }
 
 
 def test_embedder_sets_offline_only_after_finding_local_model(monkeypatch, tmp_path):

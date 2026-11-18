@@ -58,13 +58,15 @@ def isolated_index(tmp_path, monkeypatch):
     monkeypatch.setattr(
         backfill_index,
         "save_file_metadata",
-        lambda path, file_type, indexed_at=None, file_mtime_ns=None: (
+        lambda path, file_type, indexed_at=None, file_mtime_ns=None,
+        vision_model=None: (
             metadata_store.save_file_metadata(
                 path,
                 file_type,
                 indexed_at=indexed_at,
                 db_path=db_path,
                 file_mtime_ns=file_mtime_ns,
+                vision_model=vision_model,
             )
         ),
     )
@@ -137,7 +139,7 @@ def test_changed_file_removes_old_chunks_and_indexes_new_content(
     assert metadata_store.get_chunks(file_path, db_path=db_path) == ["new_unique"]
 
 
-def test_image_without_cuda_is_indexed_by_filename_without_loading_vision_model(
+def test_image_without_local_cpu_model_uses_filename_without_loading_vision_model(
     tmp_path, isolated_index, monkeypatch
 ):
     _, collection = isolated_index
@@ -147,11 +149,13 @@ def test_image_without_cuda_is_indexed_by_filename_without_loading_vision_model(
     image_path.write_bytes(b"not decoded when CUDA is unavailable")
     monkeypatch.setattr(vision_pipeline, "get_current_tier", lambda: "mid")
     monkeypatch.setattr(vision_pipeline.torch.cuda, "is_available", lambda: False)
-    monkeypatch.setattr(vision_pipeline, "find_model", lambda repo_id: Path("model"))
+    monkeypatch.setattr(vision_pipeline, "find_model", lambda repo_id: None)
     monkeypatch.setattr(
         vision_pipeline,
-        "get_model_and_processor",
-        lambda: pytest.fail("vision model loader must not run without CUDA"),
+        "_load_model",
+        lambda *_args: pytest.fail(
+            "vision model loader must not run without a local CPU model"
+        ),
     )
     monkeypatch.setattr(
         backfill_index,
@@ -168,7 +172,7 @@ def test_image_without_cuda_is_indexed_by_filename_without_loading_vision_model(
 
     assert "image filename only" in result
     assert notices == [
-        "Image descriptions need a GPU - using file names only for now"
+        "Image descriptions are unavailable - using file names only for now"
     ]
     assert f"{normalize_path(image_path)}::filename" in collection.items
     assert not any(

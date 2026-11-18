@@ -36,11 +36,11 @@ Status: **Done** — unit and integration tests, the golden-set evaluation, thre
 
 ## Current status
 
-Feature 1 is implemented and validated with confidence threshold `0.55`, ambiguity margin `0.07`, options floor `0.48`, maximum options `3`, minimum additional-card score `0.50`, and option score window `0.03`. Both confident and uncertain results use the compact reference card style; confident cards and the 1-3-card uncertain stack are movable. The full desktop UI has not yet been visually verified interactively. Device-tier steps 1 and 2 are implemented; model setup requires explicit consent and the app runs offline after required model files are local.
+Feature 1 is implemented and validated with confidence threshold `0.55`, ambiguity margin `0.07`, options floor `0.48`, maximum options `3`, minimum additional-card score `0.50`, and option score window `0.03`. Both confident and uncertain results use the compact reference card style; confident cards and the 1-3-card uncertain stack are movable. The full desktop UI has not yet been visually verified interactively. Device-tier steps 1-3 are implemented; model setup requires explicit consent and the app runs offline after required model files are local. Gemma E4B is registered but remains untested and was not downloaded.
 
 ## Device tiers
 
 1. **Hardware detection and tier choice — Done.** Detect RAM, disk, CPU, architecture, OS and NVIDIA GPU; select or override small/mid/big. Keep embeddings fixed at `all-mpnet-base-v2`.
 2. **Model registry and first-run downloader — Done.** Pin public model revisions, check local model files, prompt before downloads, show byte progress with cancel/retry, and keep the app offline after setup. If CUDA is unavailable or no vision model is configured for the tier, index images by filename only.
-3. **Vision model per tier — Open.** Choose and wire a vision model for each tier.
+3. **Vision model per tier — Done.** Small uses SmolVLM-500M (chosen over 256M from the isolated image comparison), mid uses Gemma E2B 4-bit, and big uses Gemma E4B 4-bit with an explicit untested caveat. Image description falls back down the tiers, unloads after each scan, and records the model in metadata. Embeddings remain fixed at `all-mpnet-base-v2`.
 4. **Whisper size per tier — Open.** Apply the noted Whisper model size when voice search is implemented.

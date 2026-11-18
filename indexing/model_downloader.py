@@ -44,10 +44,11 @@ def _registry_models():
 
 
 def models_for_tier(tier):
-    """Return ready registry entries needed by a performance tier."""
+    """Return usable registry entries needed by a performance tier."""
     return [
         model for model in _registry_models()
-        if model.get("status") == "ready" and tier in model.get("tiers", [])
+        if model.get("status") in {"ready", "untested"}
+        and tier in model.get("tiers", [])
     ]
 
 
@@ -79,7 +80,7 @@ def _existing_complete_bytes(snapshot_dir, files):
 
 def download_model(model, progress_cb=None, cancel_event=None):
     """Download and verify one pinned snapshot; Hub cache files allow resume."""
-    if model.get("status") != "ready" or not model.get("repo_id"):
+    if model.get("status") not in {"ready", "untested"} or not model.get("repo_id"):
         raise ModelDownloadError("This model is planned and cannot be downloaded yet.")
 
     repo_id = model["repo_id"]

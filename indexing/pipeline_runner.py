@@ -11,7 +11,11 @@ from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
-from indexing.vision_pipeline import describe_image
+from indexing.vision_pipeline import (
+    describe_image,
+    get_active_vision_model,
+    unload_vision_model,
+)
 from indexing.embedder import embed_text
 from storage.vector_db.vector_store import add_item
 
@@ -46,12 +50,19 @@ class PipelineHandler(FileSystemEventHandler):
                 vector = embed_text(description)
                 add_item(file_path, vector, metadata={
                     "path": file_path,
-                    "description": description
+                    "description": description,
+                    "match_type": "content",
                 })
-                save_file_metadata(file_path, category)
+                save_file_metadata(
+                    file_path,
+                    category,
+                    vision_model=get_active_vision_model(),
+                )
                 print(f"[INDEXED - image] {file_path} -> \"{description}\"")
             except Exception as e:
                 print(f"[ERROR] {file_path} -> {e}")
+            finally:
+                unload_vision_model()
         elif category == "video":
             print(f"[UNSUPPORTED - video not yet processed] {file_path}")
         else:

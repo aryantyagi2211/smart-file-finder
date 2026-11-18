@@ -20,15 +20,15 @@ MODEL_TIER_DEFAULTS = {
         "big": {
             "min_ram_gb": 24,
             "min_vram_gb": 12,
-            "min_free_disk_gb": 1,
-            "vision_model": "Larger vision model (to be decided later)",
+            "min_free_disk_gb": 42,
+            "vision_model": "google/gemma-4-E4B-it (4-bit, untested)",
             "whisper_model_size": "small/medium",
             "summarizer": "yes",
         },
         "mid": {
             "min_ram_gb": 12,
             "min_vram_gb": 4,
-            "min_free_disk_gb": 17,
+            "min_free_disk_gb": 18,
             "vision_model": "google/gemma-4-E2B-it (4-bit)",
             "whisper_model_size": "base",
             "summarizer": "yes",
@@ -36,8 +36,8 @@ MODEL_TIER_DEFAULTS = {
         "small": {
             "min_ram_gb": 0,
             "min_vram_gb": 0,
-            "min_free_disk_gb": 1,
-            "vision_model": "Tiny CPU-friendly option (to be decided later)",
+            "min_free_disk_gb": 3,
+            "vision_model": "HuggingFaceTB/SmolVLM-500M-Instruct",
             "whisper_model_size": "tiny",
             "summarizer": "no",
         },
@@ -78,8 +78,14 @@ MODEL_TIER_DEFAULTS = {
             "repository_size_gb": 10.278835678,
             "repository_size_bytes": 10278835678,
             "repository_file_count": 9,
-            "tiers": ["mid"],
+            "family": "gemma4",
+            "requires_cuda": True,
+            "tiers": ["mid", "big"],
             "status": "ready",
+            "prompt": "Describe this image in one or two sentences, focusing on what it depicts.",
+            "max_new_tokens": 60,
+            "license": "apache-2.0",
+            "gated": False,
             "files": {
                 "chat_template.jinja": 18569,
                 "config.json": 4954,
@@ -91,26 +97,100 @@ MODEL_TIER_DEFAULTS = {
             },
         },
         {
-            "name": "Small-tier vision model (planned)",
+            "name": "SmolVLM-500M-Instruct",
             "purpose": "vision",
-            "repo_id": None,
-            "revision": None,
-            "download_size_gb": None,
-            "download_size_bytes": None,
-            "tiers": ["small"],
-            "status": "planned",
-            "files": {},
+            "repo_id": "HuggingFaceTB/SmolVLM-500M-Instruct",
+            "revision": "753c1752602b5e739af7a7fa6947a635051897a3",
+            "download_size_gb": 1.01988383,
+            "download_size_bytes": 1019883830,
+            "repository_size_gb": 6.902685746,
+            "repository_size_bytes": 6902685746,
+            "repository_file_count": 38,
+            "family": "smolvlm",
+            "requires_cuda": False,
+            "tiers": ["small", "mid", "big"],
+            "status": "ready",
+            "prompt": "Describe only the visible subject, objects, text, and setting in one concise sentence. Do not guess or add details that are not clearly visible.",
+            "max_new_tokens": 60,
+            "license": "apache-2.0",
+            "gated": False,
+            "files": {
+                "added_tokens.json": 4739,
+                "chat_template.json": 516,
+                "config.json": 7339,
+                "generation_config.json": 136,
+                "merges.txt": 466391,
+                "model.safetensors": 1015025832,
+                "preprocessor_config.json": 486,
+                "processor_config.json": 68,
+                "special_tokens_map.json": 1069,
+                "tokenizer.json": 3548256,
+                "tokenizer_config.json": 28336,
+                "vocab.json": 800662,
+            },
         },
         {
-            "name": "Big-tier vision model (planned)",
+            "name": "SmolVLM-256M-Instruct (benchmark candidate)",
             "purpose": "vision",
-            "repo_id": None,
-            "revision": None,
-            "download_size_gb": None,
-            "download_size_bytes": None,
+            "repo_id": "HuggingFaceTB/SmolVLM-256M-Instruct",
+            "revision": "d039ab0d4b9311b617e8ffec1d06c8464364aeb3",
+            "download_size_gb": 0.51788682,
+            "download_size_bytes": 517886820,
+            "repository_size_gb": 3.542912443,
+            "repository_size_bytes": 3542912443,
+            "repository_file_count": 38,
+            "family": "smolvlm",
+            "requires_cuda": False,
+            "tiers": [],
+            "candidate_tier": "small",
+            "benchmark_only": True,
+            "status": "ready",
+            "prompt": "Describe only the visible subject, objects, text, and setting in one concise sentence. Do not guess or add details that are not clearly visible.",
+            "max_new_tokens": 60,
+            "license": "apache-2.0",
+            "gated": False,
+            "files": {
+                "added_tokens.json": 4739,
+                "chat_template.json": 516,
+                "config.json": 7353,
+                "generation_config.json": 136,
+                "merges.txt": 466391,
+                "model.safetensors": 513028808,
+                "preprocessor_config.json": 486,
+                "processor_config.json": 68,
+                "special_tokens_map.json": 1069,
+                "tokenizer.json": 3548256,
+                "tokenizer_config.json": 28336,
+                "vocab.json": 800662,
+            },
+        },
+        {
+            "name": "Gemma 4 E4B-it",
+            "purpose": "vision",
+            "repo_id": "google/gemma-4-E4B-it",
+            "revision": "4ecc2ba63bcac23ba4a767fc87025b1450f84c9c",
+            "download_size_gb": 16.024781005,
+            "download_size_bytes": 16024781005,
+            "repository_size_gb": 16.024810531,
+            "repository_size_bytes": 16024810531,
+            "repository_file_count": 9,
+            "family": "gemma4",
+            "requires_cuda": True,
             "tiers": ["big"],
-            "status": "planned",
-            "files": {},
+            "status": "untested",
+            "prompt": "Describe this image in one or two sentences, focusing on what it depicts.",
+            "max_new_tokens": 60,
+            "license": "apache-2.0",
+            "gated": False,
+            "files": {
+                "chat_template.jinja": 18569,
+                "config.json": 5145,
+                "generation_config.json": 208,
+                "model.safetensors": 15992595884,
+                "processor_config.json": 1689,
+                "tokenizer.json": 32156428,
+                "tokenizer_config.json": 3082,
+            },
         },
     ],
 }
@@ -139,6 +219,16 @@ def get_base_dir():
     running from source or as a packaged/installed .exe -- since the
     installed .exe's own folder (Program Files) is not writable.
     """
+    override = os.environ.get("SMART_FILE_FINDER_EVAL_DATA_DIR")
+    if override:
+        base_dir = Path(override).expanduser()
+    else:
+        base_dir = _default_base_dir()
+    base_dir.mkdir(parents=True, exist_ok=True)
+    return base_dir
+
+
+def _default_base_dir():
     app_data = Path(os.environ.get("LOCALAPPDATA", Path.home()))
     base_dir = app_data / APP_FOLDER_NAME
     base_dir.mkdir(parents=True, exist_ok=True)
@@ -152,7 +242,7 @@ def get_hardware_profile_path():
 
 def get_models_dir():
     """Return the writable app-local Hugging Face model cache directory."""
-    models_dir = get_base_dir() / "models"
+    models_dir = _default_base_dir() / "models"
     models_dir.mkdir(parents=True, exist_ok=True)
     return models_dir
 
@@ -171,7 +261,7 @@ def find_model(repo_id):
         (item for item in config.get("models", []) if item.get("repo_id") == repo_id),
         None,
     )
-    if model is None or model.get("status") != "ready":
+    if model is None or model.get("status") not in {"ready", "untested"}:
         return None
 
     revision = model.get("revision")

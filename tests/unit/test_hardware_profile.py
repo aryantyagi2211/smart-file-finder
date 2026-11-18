@@ -71,7 +71,7 @@ def test_low_disk_steps_down_one_tier_and_reports_reason():
 
     assert tier == "mid"
     assert "stepped down to mid" in reason
-    assert "1 GB minimum" in reason
+    assert "42 GB minimum" in reason
 
 
 def test_valid_override_wins_even_below_hardware_minimums(monkeypatch):

@@ -110,3 +110,18 @@ def test_config_files_are_found_from_a_different_working_directory(
         "max_options": 3,
     }
     assert app_paths.normalize_path(tmp_path / "extra") in load_indexed_folders()
+
+
+def test_base_data_directory_can_be_isolated_for_eval_and_tests(
+    tmp_path, monkeypatch
+):
+    isolated = tmp_path / "isolated-data"
+    local_app_data = tmp_path / "local-app-data"
+    monkeypatch.setenv("LOCALAPPDATA", str(local_app_data))
+    monkeypatch.setenv("SMART_FILE_FINDER_EVAL_DATA_DIR", str(isolated))
+
+    assert app_paths.get_base_dir() == isolated
+    assert isolated.is_dir()
+    assert app_paths.get_models_dir() == (
+        local_app_data / app_paths.APP_FOLDER_NAME / "models"
+    )

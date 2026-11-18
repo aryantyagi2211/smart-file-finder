@@ -42,6 +42,8 @@ def init_db(db_path=DB_PATH):
             )
         if "failure_mtime_ns" not in columns:
             connection.execute("ALTER TABLE files ADD COLUMN failure_mtime_ns INTEGER")
+        if "vision_model" not in columns:
+            connection.execute("ALTER TABLE files ADD COLUMN vision_model TEXT")
 
 
 def init_chunks_table(db_path=DB_PATH):
@@ -103,23 +105,26 @@ def migrate_relative_paths(db_path=DB_PATH):
 
 
 def save_file_metadata(path, file_type, indexed_at=None, db_path=DB_PATH,
-                       file_mtime_ns=None):
+                       file_mtime_ns=None, vision_model=None):
     init_db(db_path)
     timestamp = indexed_at or datetime.now().isoformat()
     normalized_path = normalize_path(path)
     with _connect(db_path) as connection:
         connection.execute(
             """
-            INSERT INTO files (path, file_type, indexed_at, file_mtime_ns)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO files (
+                path, file_type, indexed_at, file_mtime_ns, vision_model
+            )
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(path) DO UPDATE SET
                 file_type = excluded.file_type,
                 indexed_at = excluded.indexed_at,
                 file_mtime_ns = COALESCE(excluded.file_mtime_ns, files.file_mtime_ns),
                 fail_count = 0,
-                failure_mtime_ns = NULL
+                failure_mtime_ns = NULL,
+                vision_model = excluded.vision_model
             """,
-            (normalized_path, file_type, timestamp, file_mtime_ns),
+            (normalized_path, file_type, timestamp, file_mtime_ns, vision_model),
         )
 
 
@@ -131,7 +136,7 @@ def get_file_metadata(path, db_path=DB_PATH):
         row = connection.execute(
             """
             SELECT path, file_type, indexed_at, file_mtime_ns,
-                   fail_count, failure_mtime_ns
+                   fail_count, failure_mtime_ns, vision_model
             FROM files WHERE path = ?
             """,
             (normalized_path,),
@@ -144,7 +149,7 @@ def list_all_files(db_path=DB_PATH):
     with _connect(db_path) as connection:
         connection.row_factory = sqlite3.Row
         rows = connection.execute(
-            "SELECT path, file_type, indexed_at FROM files ORDER BY path"
+            "SELECT path, file_type, indexed_at, vision_model FROM files ORDER BY path"
         ).fetchall()
     return [dict(row) for row in rows]
 

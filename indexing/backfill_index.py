@@ -19,7 +19,12 @@ from pathlib import Path
 
 from indexing.file_router import route_file
 from indexing.text_pipeline import process_document
-from indexing.vision_pipeline import describe_image, image_description_status
+from indexing.vision_pipeline import (
+    describe_image,
+    get_active_vision_model,
+    image_description_status,
+    unload_vision_model,
+)
 from indexing.embedder import embed_text, embed_texts
 from storage.metadata_store import (
     delete_file,
@@ -158,13 +163,14 @@ def _warn_image_fallback(status_callback=None, reason=""):
     if _IMAGE_FALLBACK_WARNED:
         return
     _IMAGE_FALLBACK_WARNED = True
-    message = "Image descriptions need a GPU - using file names only for now"
+    message = "Image descriptions are unavailable - using file names only for now"
     log(f"WARNING: {message} ({reason})")
     if status_callback is not None:
         status_callback(message)
 
 
-def index_one_file(file_path, force=False, status_callback=None):
+def index_one_file(file_path, force=False, status_callback=None,
+                   retain_vision_model=False):
     """
     Route, process, and store a single file (text or image) -- but skip
     it entirely if it's already indexed and hasn't changed since. Also
@@ -233,6 +239,7 @@ def index_one_file(file_path, force=False, status_callback=None):
             previous_failures = existing.get("fail_count", 0)
 
     try:
+        vision_model = None
         if category == "text/document":
             chunks = process_document(file_path)
             vectors = embed_texts(chunks)
@@ -250,12 +257,20 @@ def index_one_file(file_path, force=False, status_callback=None):
             can_describe, reason = image_description_status()
             if can_describe:
                 description = describe_image(path_str)
-                vector = embed_text(description)
-                add_item(path_str, vector, metadata={
-                    "path": path_str,
-                    "description": description,
-                    "match_type": "content"
-                })
+                vision_model = get_active_vision_model()
+                if vision_model is not None:
+                    vector = embed_text(description)
+                    add_item(path_str, vector, metadata={
+                        "path": path_str,
+                        "description": description,
+                        "match_type": "content"
+                    })
+                else:
+                    description = None
+                    _warn_image_fallback(
+                        status_callback,
+                        "all configured vision models failed or are unavailable",
+                    )
             else:
                 description = None
                 _warn_image_fallback(status_callback, reason)
@@ -271,7 +286,12 @@ def index_one_file(file_path, force=False, status_callback=None):
             "chunk_text": filename
         })
 
-        save_file_metadata(path_str, category, file_mtime_ns=file_mtime_ns)
+        save_file_metadata(
+            path_str,
+            category,
+            file_mtime_ns=file_mtime_ns,
+            vision_model=vision_model,
+        )
     except Exception as error:
         log(f"[ERROR] Failed to index {path_str}: {error}")
         remove_file_index(path_str, reason=f"indexing failed: {error}")
@@ -282,6 +302,9 @@ def index_one_file(file_path, force=False, status_callback=None):
             file_mtime_ns,
         )
         raise
+    finally:
+        if category == "image" and not retain_vision_model:
+            unload_vision_model()
 
     if category == "text/document":
         return f"[INDEXED - text] {path_str} -> {len(chunks)} chunks"
@@ -353,6 +376,7 @@ def backfill(settings_path=None, progress_callback=None, error_callback=None,
                 file_path,
                 force=rebuild_index,
                 status_callback=status_callback,
+                retain_vision_model=True,
             )
             if "SKIPPED - unknown type" in status:
                 pass  # not an error, just an unsupported file type, no red icon
@@ -366,6 +390,7 @@ def backfill(settings_path=None, progress_callback=None, error_callback=None,
         results.append(status)
         print(status)
 
+    unload_vision_model()
     cleanup_missing_files(indexed_folders=folders)
 
 
