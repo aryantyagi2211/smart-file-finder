@@ -1,4 +1,4 @@
-"""Pure tap-versus-hold detector for the Ctrl+Shift+Space gesture."""
+"""Pure detector for the search-bar tap and voice-key hold gestures."""
 
 from enum import Enum
 
@@ -7,79 +7,153 @@ class VoiceGesture(str, Enum):
     TAP = "TAP"
     HOLD_START = "HOLD_START"
     HOLD_END = "HOLD_END"
+    CANCEL = "CANCEL"
 
 
 class TapHoldDetector:
-    def __init__(self, hold_threshold_ms=400, max_hold_ms=15000, clock=None):
+    _TAP_KEYS = {"ctrl", "shift", "space"}
+    _BLOCKING_MODIFIERS = {"ctrl", "shift", "win"}
+
+    def __init__(
+        self,
+        hold_threshold_ms=500,
+        max_hold_ms=15000,
+        clock=None,
+        voice_key="left alt",
+    ):
         self.hold_threshold_ms = hold_threshold_ms
         self.max_hold_ms = max_hold_ms
         self._clock = clock or (lambda: __import__("time").monotonic() * 1000)
         self._pressed = set()
-        self._hotkey_down = False
-        self._hold_started = False
-        self._started_at = None
-        self._tap_emitted = False
+        self.voice_key = self._normalize(voice_key)
+        if self.voice_key not in {"left alt", "right alt"}:
+            raise ValueError("voice_key must be 'left alt' or 'right alt'")
+        self._voice_down = False
+        self._voice_blocked = False
+        self._voice_started = False
+        self._voice_started_at = None
+        self._voice_ui_active = False
+        self._tap_active = False
+        self._tap_invalid = False
+        self._tap_started_at = None
 
     @staticmethod
     def _normalize(name):
-        name = str(name).casefold().replace("_", " ")
-        return name
+        name = " ".join(str(name).casefold().replace("_", " ").split())
+        aliases = {
+            "alt": "left alt",
+            "alt gr": "right alt",
+            "altgraph": "right alt",
+            "left ctrl": "ctrl",
+            "right ctrl": "ctrl",
+            "left control": "ctrl",
+            "right control": "ctrl",
+            "left shift": "shift",
+            "right shift": "shift",
+            "left win": "win",
+            "right win": "win",
+            "left windows": "win",
+            "right windows": "win",
+            "windows": "win",
+            "spacebar": "space",
+        }
+        return aliases.get(name, name)
 
     def key_down(self, key_name, repeated=False):
         name = self._normalize(key_name)
-        if repeated:
+        if repeated or name in self._pressed:
             return None
-        if name in {"ctrl", "left ctrl", "right ctrl"}:
-            self._pressed.add("ctrl")
-        elif name in {"shift", "left shift", "right shift"}:
-            self._pressed.add("shift")
-        elif name in {"space", "spacebar"}:
-            self._pressed.add("space")
-        if not self._hotkey_down and {"ctrl", "shift", "space"} <= self._pressed:
-            self._hotkey_down = True
-            self._hold_started = False
-            self._tap_emitted = False
-            self._started_at = self._clock()
+
+        self._pressed.add(name)
+        if name == self.voice_key:
+            self._voice_down = True
+            self._voice_blocked = (
+                bool(self._pressed - {self.voice_key})
+                or bool(self._pressed & self._BLOCKING_MODIFIERS)
+            )
+            self._voice_started = False
+            self._voice_started_at = (
+                None if self._voice_blocked else self._clock()
+            )
+            return None
+
+        if self._voice_down and not self._voice_blocked:
+            self._voice_blocked = True
+            self._voice_started_at = None
+            if self._voice_started:
+                self._voice_started = False
+                self._voice_ui_active = False
+                return VoiceGesture.CANCEL
+
+        if self._voice_ui_active:
+            self._voice_ui_active = False
+            return VoiceGesture.CANCEL
+
+        if self._tap_active and name not in self._TAP_KEYS:
+            self._tap_invalid = True
+
+        if (
+            not self._tap_active
+            and name in self._TAP_KEYS
+            and self._TAP_KEYS <= self._pressed
+        ):
+            self._tap_active = True
+            self._tap_invalid = bool(self._pressed - self._TAP_KEYS)
+            self._tap_started_at = self._clock()
         return None
 
     def poll(self):
-        if not self._hotkey_down or self._hold_started or self._started_at is None:
+        if (
+            not self._voice_down
+            or self._voice_blocked
+            or self._voice_started
+            or self._voice_started_at is None
+        ):
             return None
-        elapsed = self._clock() - self._started_at
+        elapsed = self._clock() - self._voice_started_at
         if elapsed >= self.hold_threshold_ms:
-            self._hold_started = True
+            self._voice_started = True
+            self._voice_ui_active = True
             return VoiceGesture.HOLD_START
         return None
 
     def key_up(self, key_name):
         name = self._normalize(key_name)
-        if name in {"ctrl", "left ctrl", "right ctrl"}:
-            self._pressed.discard("ctrl")
-        elif name in {"shift", "left shift", "right shift"}:
-            self._pressed.discard("shift")
-        elif name in {"space", "spacebar"}:
-            self._pressed.discard("space")
+        if name == self.voice_key and self._voice_down:
+            self._pressed.discard(name)
+            gesture = (
+                VoiceGesture.HOLD_END
+                if self._voice_started and not self._voice_blocked
+                else None
+            )
+            self._reset_voice_key()
+            return gesture
 
-        if not self._hotkey_down:
-            return None
+        if name in self._TAP_KEYS and self._tap_active:
+            elapsed = self._clock() - self._tap_started_at
+            valid_tap = (
+                not self._tap_invalid
+                and elapsed < self.hold_threshold_ms
+                and not (self._pressed - self._TAP_KEYS)
+            )
+            self._pressed.discard(name)
+            self._reset_tap()
+            return VoiceGesture.TAP if valid_tap else None
 
-        ended = self._clock()
-        elapsed = ended - self._started_at
-        if self._hold_started:
-            self._reset()
-            return VoiceGesture.HOLD_END
-        if not {"ctrl", "shift", "space"} & self._pressed:
-            return None
-        if name in {"ctrl", "left ctrl", "right ctrl",
-                    "shift", "left shift", "right shift", "space", "spacebar"}:
-            if elapsed < self.hold_threshold_ms:
-                self._reset()
-                return VoiceGesture.TAP
+        self._pressed.discard(name)
         return None
 
-    def _reset(self):
-        self._pressed.clear()
-        self._hotkey_down = False
-        self._hold_started = False
-        self._started_at = None
-        self._tap_emitted = False
+    def finish_voice_session(self):
+        """Allow the global listener to stop treating keys as overlay cancel."""
+        self._voice_ui_active = False
+
+    def _reset_voice_key(self):
+        self._voice_down = False
+        self._voice_blocked = False
+        self._voice_started = False
+        self._voice_started_at = None
+
+    def _reset_tap(self):
+        self._tap_active = False
+        self._tap_invalid = False
+        self._tap_started_at = None

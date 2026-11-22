@@ -33,13 +33,20 @@ from watchdog.events import FileSystemEventHandler
 from app.hotkey_listener import (
     DEFAULT_HOTKEY,
     register_tap_hold_hotkey,
+    register_hotkey,
+    unregister_hotkey,
 )
 from app.voice_hotkey import VoiceGesture
 from app.voice_recorder import VoiceRecorder, VoiceRecorderError
 from app.voice_transcriber import VoiceTranscriber
-from app.voice_pill import VoicePill
+from app.voice_overlay import VoiceOverlay
 from app.input_bar import InputBar
-from app.command_parser import parse_command, Command, should_auto_open
+from app.command_parser import (
+    parse_command,
+    parse_voice_command,
+    Command,
+    should_auto_open,
+)
 from app.query_handler import handle_query
 from app.result_card import OptionsPopupGroup, ResultCard
 from indexing.backfill_index import (
@@ -175,7 +182,13 @@ class SmartFileFinderApp:
         )
         self.result_card = None
         self.options_group = None
-        self.voice_pill = VoicePill(anchor=self.input_bar)
+        self.voice_overlay = VoiceOverlay()
+        self.voice_overlay.dismissed.connect(
+            self._on_voice_overlay_dismissed
+        )
+        self._voice_overlay_active = threading.Event()
+        self._pending_voice_transcript = None
+        self._pending_voice_auto_search = True
         self.voice_bridge = VoiceBridge()
         self.voice_bridge.state.connect(self._on_voice_state)
         self.voice_bridge.text.connect(self._on_voice_text)
@@ -198,6 +211,7 @@ class SmartFileFinderApp:
             else "Voice search is not available on this device yet"
         )
         self._hotkey_unregister = None
+        self._search_hotkeys_registered = False
         self._recording = False
         self._voice_setup_window = None
         self._update_voice_tray_action()
@@ -284,9 +298,15 @@ class SmartFileFinderApp:
     def _toggle_voice(self):
         if not self.voice_available:
             return
+        hotkeys_registered = self._search_hotkeys_registered
+        if self._hotkey_unregister is not None:
+            self._hotkey_unregister()
+            self._hotkey_unregister = None
         self.voice_enabled = not self.voice_enabled
         self._save_voice_setting("voice_enabled", self.voice_enabled)
         self._update_voice_tray_action()
+        if hotkeys_registered:
+            self._register_search_hotkeys()
 
     def _detect_hardware_in_background(self):
         profile = {}
@@ -401,19 +421,34 @@ class SmartFileFinderApp:
         self.status_window.mark_complete()
         self.status_window.hide()
         self._start_watchers()
-        hold_ms = int(self._load_voice_setting("voice_hold_ms", 400))
+        self._register_search_hotkeys()
+        self._search_hotkeys_registered = True
+        print(f"Smart File Finder running. Press {DEFAULT_HOTKEY} to search.")
+
+    def _register_search_hotkeys(self):
+        hold_ms = int(self._load_voice_setting("voice_hold_ms", 500))
         if self.voice_enabled:
+            voice_key = str(
+                self._load_voice_setting("voice_key", "left alt")
+            ).strip().casefold()
+            if voice_key not in {"left alt", "right alt"}:
+                log(
+                    f"WARNING: Invalid voice_key {voice_key!r}; "
+                    "using left alt"
+                )
+                voice_key = "left alt"
             self._hotkey_unregister = register_tap_hold_hotkey(
                 self._on_voice_hotkey_event,
                 hold_threshold_ms=hold_ms,
                 max_hold_ms=int(
                     self._load_voice_setting("voice_max_seconds", 15)
                 ) * 1000,
+                voice_key=voice_key,
+                cancel_event=self._voice_overlay_active,
             )
         else:
-            from app.hotkey_listener import register_hotkey
-            register_hotkey(self._show_input_bar, DEFAULT_HOTKEY)
-        print(f"Smart File Finder running. Press {DEFAULT_HOTKEY} to search.")
+            handle = register_hotkey(self._show_input_bar, DEFAULT_HOTKEY)
+            self._hotkey_unregister = lambda: unregister_hotkey(handle)
 
     def _start_watchers(self):
         folders = load_indexed_folders()
@@ -435,12 +470,16 @@ class SmartFileFinderApp:
             self.voice_bridge.state.emit("hold_start")
         elif gesture == VoiceGesture.HOLD_END:
             self.voice_bridge.state.emit("hold_end")
+        elif gesture == VoiceGesture.CANCEL:
+            self.voice_bridge.state.emit("cancel")
 
     def _on_voice_state(self, state):
         if state == "hold_start":
             self._start_voice_recording()
         elif state == "hold_end":
             self._finish_voice_recording()
+        elif state == "cancel":
+            self._cancel_voice_session()
 
     def _start_voice_recording(self):
         if not self.voice_enabled or self._recording:
@@ -480,8 +519,10 @@ class SmartFileFinderApp:
                 self.voice_transcriber = VoiceTranscriber(model_path=model_path)
             self.voice_recorder.start()
             self._recording = True
-            self.input_bar.show_and_focus()
-            self.voice_pill.show_listening()
+            self.input_bar.hide()
+            self._voice_overlay_active.set()
+            self._pending_voice_transcript = None
+            self.voice_overlay.show_listening()
         except VoiceRecorderError as error:
             self._on_voice_error(str(error))
         except Exception as error:
@@ -511,10 +552,9 @@ class SmartFileFinderApp:
             self._on_voice_error(str(error))
             return
         if audio is None:
-            self.voice_pill.show_error("Didn't catch that, try again")
-            threading.Timer(1.5, self.voice_pill.hide_status).start()
+            self._show_voice_message("Didn't catch that", 1500)
             return
-        self.voice_pill.show_transcribing()
+        self.voice_overlay.show_transcribing()
         worker = threading.Thread(
             target=self._transcribe_voice_audio,
             args=(audio,),
@@ -540,30 +580,89 @@ class SmartFileFinderApp:
         self.voice_bridge.text.emit(text)
 
     def _on_voice_text(self, text):
-        self.voice_pill.hide_status()
+        text = str(text or "").strip()
         if not text:
-            self.voice_pill.show_error("Didn't catch that, try again")
-            threading.Timer(1.5, self.voice_pill.hide_status).start()
+            self._show_voice_message("Didn't catch that", 1500)
             return
-        self.input_bar.text_input.setText(text)
-        self.input_bar.show_and_focus()
-        self._on_query_submitted(text)
+        self._pending_voice_transcript = text
+        self._pending_voice_auto_search = bool(
+            self._load_voice_setting("voice_auto_search", True)
+        )
+        self.voice_overlay.show_transcript(text)
 
     def _on_voice_error(self, message):
+        self._cancel_recording()
+        log(f"Voice search error: {message}")
+        self._show_voice_message(message, 2000)
+
+    def _cancel_voice(self):
+        self._cancel_voice_session()
+
+    def _cancel_recording(self):
+        if not self._recording:
+            return
         self._recording = False
         try:
             self.voice_recorder.cancel()
-        except Exception:
-            pass
-        log(f"Voice search error: {message}")
-        self.voice_pill.show_error(message)
-        threading.Timer(2.5, self.voice_pill.hide_status).start()
+        except Exception as error:
+            log(f"Could not discard cancelled voice recording: {error}")
 
-    def _cancel_voice(self):
-        if self._recording:
-            self._recording = False
-            self.voice_recorder.cancel()
-            self.voice_pill.hide_status()
+    def _cancel_voice_session(self):
+        self._cancel_recording()
+        self._pending_voice_transcript = None
+        self._voice_overlay_active.clear()
+        finish_session = getattr(
+            self._hotkey_unregister, "finish_voice_session", None
+        )
+        if finish_session is not None:
+            finish_session()
+        self.voice_overlay.fade_out()
+
+    def _show_voice_message(self, message, duration_ms):
+        self._pending_voice_transcript = None
+        self._voice_overlay_active.set()
+        self.voice_overlay.show_message(message, duration_ms)
+
+    def _on_voice_overlay_dismissed(self):
+        transcript = self._pending_voice_transcript
+        if transcript is None:
+            self._voice_overlay_active.clear()
+            finish_session = getattr(
+                self._hotkey_unregister, "finish_voice_session", None
+            )
+            if finish_session is not None:
+                finish_session()
+            return
+
+        auto_search = self._pending_voice_auto_search
+        self._pending_voice_transcript = None
+        parsed = parse_voice_command(transcript)
+        if parsed.command == Command.OPEN and not parsed.query:
+            self._show_voice_message(
+                "Say what to open, for example: open corrective rag",
+                2000,
+            )
+            return
+
+        if not auto_search:
+            self._pending_voice_transcript = transcript
+            self.input_bar.text_input.setText(transcript)
+            self.input_bar.show_and_focus()
+            self._voice_overlay_active.clear()
+            finish_session = getattr(
+                self._hotkey_unregister, "finish_voice_session", None
+            )
+            if finish_session is not None:
+                finish_session()
+            return
+
+        self._voice_overlay_active.clear()
+        finish_session = getattr(
+            self._hotkey_unregister, "finish_voice_session", None
+        )
+        if finish_session is not None:
+            finish_session()
+        self._execute_parsed_command(parsed)
 
     def _show_input_bar(self):
         self.hotkey_bridge.triggered.emit()
@@ -572,12 +671,24 @@ class SmartFileFinderApp:
         self.input_bar.show_and_focus()
 
     def _on_query_submitted(self, raw_text):
+        if (
+            self._pending_voice_transcript is not None
+            and raw_text == self._pending_voice_transcript
+        ):
+            self._pending_voice_transcript = None
+            parsed = parse_voice_command(raw_text)
+            self._execute_parsed_command(parsed)
+            return
+        self._pending_voice_transcript = None
         try:
             parsed = parse_command(raw_text)
         except ValueError as e:
             QMessageBox.warning(self.input_bar, "Invalid command", str(e))
             return
 
+        self._execute_parsed_command(parsed)
+
+    def _execute_parsed_command(self, parsed):
         if not parsed.query:
             return
 

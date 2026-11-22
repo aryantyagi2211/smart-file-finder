@@ -85,6 +85,9 @@ Press a hotkey, type what you're looking for the way you'd describe it to
 a person, and get back the actual file — with a short explanation of why
 it matched.
 
+Smart File Finder is for Windows PCs generally, including CPU-only
+machines; Snapdragon NPU support is a future enhancement, not a requirement.
+
 ---
 
 ## Why this exists
@@ -107,6 +110,9 @@ content the way you'd naturally describe it.
   your own CPU/GPU. Nothing is uploaded anywhere, ever.
 - **Global hotkey launcher** — `Ctrl+Shift+Space` opens a small, always-on-top
   search bar from anywhere in Windows, similar to Spotlight or PowerToys Run.
+- **Hold-to-talk voice search** — hold Left Alt by itself to speak a query.
+  Spoken `open`, `show`, `find`, and `search` commands work without a slash;
+  a floating, click-through overlay shows listening state and the transcript.
 - **Live, incremental indexing** — a background watcher picks up new and
   changed files automatically while the app runs; files that haven't
   changed are never re-processed.
@@ -191,7 +197,15 @@ many files you have — subsequent runs only process new or changed files.
 ## Usage
 
 - **`Ctrl+Shift+Space`** — open the search bar (drag it anywhere; it
-  remembers its position)
+  remembers its position). A tap opens the bar; holding it does not start voice.
+- **Hold `Left Alt`** — start voice search. The default `voice_key` is
+  `"left alt"`; `"right alt"` is configurable but can act as AltGr on some
+  keyboard layouts. A short Alt tap does nothing.
+- Spoken `open`, `show`, `find`, or `search` at the start of a transcript
+  selects that action; spoken `me`, `up`, `the`, `my`, `a`, or `an` immediately
+  after it are ignored. Other speech is a find query.
+- `voice_auto_search` defaults to `true`. Set it to `false` to review and edit
+  the transcript in the search bar before pressing Enter.
 - Type a plain description, or use an explicit command:
   - `/find <query>` — show the best match with an explanation (also the
     default for plain text)

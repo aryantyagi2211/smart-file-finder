@@ -29,7 +29,7 @@ Status: **Done** — unit and integration tests, the golden-set evaluation, thre
 
 ## Open work
 
-- Real microphone verification of the hold-to-talk gesture and voice transcription is still needed.
+- Real Left Alt press/release, focus behavior in other apps, microphone, and accent verification of voice search is still needed.
 - Final repackaging of the executable.
 - Rebuild of the installer.
 - README update for the completed update round.
@@ -46,6 +46,11 @@ Feature 1 is implemented and validated with confidence threshold `0.55`, ambigui
 3b. **Primary-only model download policy — Done.** Each tier requires the embedding model and only its primary vision model. Gemma E4B is optional and enabled with `big_vision_model: "gemma-4-E4B-it"`; it is never downloaded by default. Default free-disk thresholds are 3 GB (small), 17 GB (mid), and 17 GB (big); selecting E4B raises big to 25 GB. Missing fallbacks use filenames without starting a download.
 4. **Whisper size per tier — Done.** Small uses faster-whisper tiny.en, mid uses base.en, and big uses small.en; all run on CPU with int8. The models are optional consent-gated downloads. Synthetic TTS clips passed; a real microphone/real accent check remains for Aryan.
 
-## Feature 3 - Hold-to-talk voice search
+## Feature 3 - Alt-hold voice search
 
-Status: **Done in code and synthetic-audio validated** — the tap path keeps opening the input bar, hold starts an in-memory recording, release transcribes locally, and recognized text enters the unchanged typed-search path. Windows TTS benchmarks found 4/8 exact transcripts with tiny.en, 6/8 with base.en, and 8/8 with small.en. On eight real isolated-search cases, typed and the best synthetic voice transcripts both reached 100% hit rate. Real microphone and accent behavior still needs a check by Aryan.
+Status: **Implemented; real-device checks remain** — holding the configured Alt key alone starts an in-memory recording and release transcribes locally. The floating microphone overlay is click-through and non-focusing, and shows the transcript before the voice-only parser acts. Voice transcripts can start with `open`, `show`, `find`, or `search`; typed text continues to require `/open`, `/show`, or `/find`, with plain typed text remaining a find. `Ctrl+Shift+Space` remains a tap-only typing-bar shortcut.
+
+- Settings: `voice_key` defaults to `"left alt"` (`"right alt"` can act as AltGr on some layouts), `voice_hold_ms` defaults to `500`, and `voice_auto_search` defaults to `true`. When auto-search is false, the transcript opens in the typing bar for editing and Enter.
+- A lone spoken `open` does not search; the overlay asks what to open. OPTIONS results for voice `open` remain choices and are not opened automatically.
+- faster-whisper remains English-only and CPU/int8 by tier. The optional model download and privacy behavior is unchanged: audio stays in memory, is not written or sent, and is cleared after transcription.
+- Real Alt key behavior across apps, menu activation, microphone availability, and accents still require manual verification.

@@ -52,8 +52,10 @@ def test_missing_settings_file_is_created_with_empty_folder_defaults(
         "performance_tier": "auto",
         "big_vision_model": "gemma-4-E2B-it",
         "voice_enabled": True,
-        "voice_hold_ms": 400,
+        "voice_key": "left alt",
+        "voice_hold_ms": 500,
         "voice_max_seconds": 15,
+        "voice_auto_search": True,
     }
     assert any("settings.json" in message for message in messages)
 

@@ -10,6 +10,7 @@ Plain text with no leading slash-command is treated as /find.
 
 from dataclasses import dataclass
 from enum import Enum
+import string
 
 
 class Command(Enum):
@@ -57,6 +58,38 @@ def parse_command(raw_input):
 
     # No command prefix at all -- plain text defaults to /find.
     return ParsedCommand(command=Command.FIND, query=raw_input)
+
+
+def parse_voice_command(text):
+    """Parse spoken commands without changing typed-input command rules."""
+    raw_text = str(text or "").strip().lower()
+    if not raw_text:
+        return ParsedCommand(command=Command.FIND, query="")
+
+    first_word, separator, rest = raw_text.partition(" ")
+    spoken_command = first_word.strip(string.punctuation)
+    command = {
+        "open": Command.OPEN,
+        "show": Command.SHOW,
+        "find": Command.FIND,
+        "search": Command.FIND,
+    }.get(spoken_command)
+    if command is None:
+        return ParsedCommand(command=Command.FIND, query=raw_text)
+
+    query = rest.lstrip(string.punctuation + " \t\r\n") if separator else ""
+    fillers = {"me", "up", "the", "my", "a", "an"}
+    while query:
+        first_query_word, query_separator, remaining = query.partition(" ")
+        if first_query_word.strip(string.punctuation) not in fillers:
+            break
+        query = (
+            remaining.lstrip(string.punctuation + " \t\r\n")
+            if query_separator
+            else ""
+        )
+
+    return ParsedCommand(command=command, query=query)
 
 
 def should_auto_open(command, result_action):

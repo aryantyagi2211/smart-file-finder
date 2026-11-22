@@ -512,8 +512,10 @@ def get_config_path(filename):
             "performance_tier": "auto",
             "big_vision_model": "gemma-4-E2B-it",
             "voice_enabled": True,
-            "voice_hold_ms": 400,
+            "voice_key": "left alt",
+            "voice_hold_ms": 500,
             "voice_max_seconds": 15,
+            "voice_auto_search": True,
         },
         "model_tiers.json": MODEL_TIER_DEFAULTS,
         "harness_limits.json": {
