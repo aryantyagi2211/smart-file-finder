@@ -20,6 +20,7 @@ class _FakeRecorder:
     def __init__(self):
         self.started = threading.Event()
         self.start_thread = None
+        self.cancel_calls = 0
 
     def start(self):
         self.start_thread = threading.get_ident()
@@ -29,7 +30,7 @@ class _FakeRecorder:
         return np.zeros(16000, dtype=np.float32)
 
     def cancel(self):
-        pass
+        self.cancel_calls += 1
 
 
 class _FakeTranscriber:
@@ -172,9 +173,13 @@ def test_alt_voice_flow_uses_main_thread_and_dispatches_spoken_command(
     )
 
     release_alt = threading.Event()
+    repeated_alt_sent = threading.Event()
 
     def fake_key_source():
         send_key("left alt", 56, keyboard.KEY_DOWN)
+        if controller._voice_overlay_active.wait(2):
+            send_key("left alt", 56, keyboard.KEY_DOWN)
+            repeated_alt_sent.set()
         release_alt.wait(2)
         send_key("left alt", 56, keyboard.KEY_UP)
 
@@ -188,6 +193,13 @@ def test_alt_voice_flow_uses_main_thread_and_dispatches_spoken_command(
             time.sleep(0.005)
 
         assert recorder.started.is_set(), "Alt hold did not start the recorder"
+        deadline = time.monotonic() + 2
+        while not repeated_alt_sent.is_set() and time.monotonic() < deadline:
+            qt_app.processEvents()
+            time.sleep(0.005)
+        assert repeated_alt_sent.is_set()
+        qt_app.processEvents()
+        assert recorder.cancel_calls == 0
         assert recorder.start_thread == gui_thread
         qt_app.processEvents()
         assert overlay.isVisible()

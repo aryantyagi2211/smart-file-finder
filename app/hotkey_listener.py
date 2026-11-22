@@ -89,27 +89,53 @@ def register_tap_hold_hotkey(callback, hold_threshold_ms=500,
             name = event_key_name(event)
             injected = is_injected_unassigned_key(event)
             scan_code = getattr(event, "scan_code", None)
-            log_voice(
-                f"key event type={event.event_type} name={name!r} "
-                f"scan_code={scan_code!r} injected={injected} "
-                f"repeat={repeated}"
-            )
+            safe_event_names = {
+                detector.voice_key,
+                "left alt",
+                "right alt",
+                "alt",
+                "alt gr",
+                "ctrl",
+                "shift",
+                "win",
+                "space",
+                "tab",
+                "esc",
+                "enter",
+                "f4",
+            }
+            if injected or name in safe_event_names or detector.voice_session_active:
+                display_name = name
+                display_scan_code = scan_code
+                if (
+                    detector.voice_session_active
+                    and len(name) == 1
+                    and name.isprintable()
+                    and not injected
+                ):
+                    display_name = "<printable key>"
+                    display_scan_code = "<redacted>"
+                log_voice(
+                    f"key event type={event.event_type} name={display_name!r} "
+                    f"scan_code={display_scan_code!r} injected={injected} "
+                    f"repeat={repeated}"
+                )
             if injected:
                 return
 
             if event.event_type == keyboard.KEY_DOWN:
+                was_pressed = detector.is_key_down(name)
                 action = detector.key_down(name, repeated=repeated)
                 reason = detector.last_decision_reason
                 if (
                     action is None
                     and not repeated
+                    and not was_pressed
                     and cancel_event is not None
                     and cancel_event.is_set()
                 ):
                     action = VoiceGesture.CANCEL
-                    reason = (
-                        f"key {name!r} pressed while voice overlay was active"
-                    )
+                    reason = "key pressed while voice overlay was active"
             else:
                 action = detector.key_up(name)
                 reason = detector.last_decision_reason

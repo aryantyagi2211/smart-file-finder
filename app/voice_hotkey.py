@@ -86,14 +86,14 @@ class TapHoldDetector:
                 self._voice_started = False
                 self._voice_ui_active = False
                 self.last_decision_reason = (
-                    f"key {name!r} pressed while voice recording"
+                    "another key pressed while voice recording"
                 )
                 return VoiceGesture.CANCEL
 
         if self._voice_ui_active:
             self._voice_ui_active = False
             self.last_decision_reason = (
-                f"key {name!r} pressed while voice session active"
+                "another key pressed while voice session active"
             )
             return VoiceGesture.CANCEL
 
@@ -162,6 +162,13 @@ class TapHoldDetector:
     def finish_voice_session(self):
         """Allow the global listener to stop treating keys as overlay cancel."""
         self._voice_ui_active = False
+
+    def is_key_down(self, key_name):
+        return self._normalize(key_name) in self._pressed
+
+    @property
+    def voice_session_active(self):
+        return self._voice_down or self._voice_ui_active
 
     def _reset_voice_key(self):
         self._voice_down = False
