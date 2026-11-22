@@ -12,7 +12,7 @@ import ctypes
 import os
 
 from app.voice_hotkey import TapHoldDetector, VoiceGesture
-from observability.logger import log
+from observability.logger import log_voice, log_voice_exception
 
 DEFAULT_HOTKEY = "ctrl+shift+space"
 
@@ -58,45 +58,83 @@ def register_tap_hold_hotkey(callback, hold_threshold_ms=500,
 
     def is_injected_unassigned_key(event):
         name = str(getattr(event, "name", "")).casefold()
-        return name in {"unknown", "vk 0xe8"} and getattr(
-            event, "scan_code", None
-        ) in {None, 0, 0xE8}
+        scan_code = getattr(event, "scan_code", None)
+        return scan_code == -0xE8 or (
+            name in {"unknown", "vk 0xe8"}
+            and scan_code in {None, 0, 0xE8}
+        )
 
-    def dispatch(action):
+    def dispatch(action, reason):
+        log_voice(
+            f"detector decision={action.value} reason={reason or 'unspecified'}"
+        )
         if action == VoiceGesture.HOLD_START:
             try:
+                log_voice("injecting menu-suppression key VK 0xE8")
                 inject_unassigned_key()
             except Exception as error:
-                log(f"Could not suppress the Alt menu key: {error}")
-        callback(action)
+                log_voice_exception(
+                    f"could not suppress the Alt menu key: {error}"
+                )
+        try:
+            callback(action)
+        except Exception:
+            log_voice_exception(
+                f"voice gesture callback failed for {action.value}"
+            )
 
     def on_event(event):
-        repeated = bool(getattr(event, "is_repeat", False))
-        if is_injected_unassigned_key(event):
-            return
-        name = event_key_name(event)
-        if event.event_type == keyboard.KEY_DOWN:
-            action = detector.key_down(name, repeated=repeated)
-            if (
-                action is None
-                and not repeated
-                and cancel_event is not None
-                and cancel_event.is_set()
-            ):
-                action = VoiceGesture.CANCEL
-        else:
-            action = detector.key_up(name)
-        if action is not None:
-            dispatch(action)
+        try:
+            repeated = bool(getattr(event, "is_repeat", False))
+            name = event_key_name(event)
+            injected = is_injected_unassigned_key(event)
+            scan_code = getattr(event, "scan_code", None)
+            log_voice(
+                f"key event type={event.event_type} name={name!r} "
+                f"scan_code={scan_code!r} injected={injected} "
+                f"repeat={repeated}"
+            )
+            if injected:
+                return
 
-    hook = keyboard.hook(on_event)
+            if event.event_type == keyboard.KEY_DOWN:
+                action = detector.key_down(name, repeated=repeated)
+                reason = detector.last_decision_reason
+                if (
+                    action is None
+                    and not repeated
+                    and cancel_event is not None
+                    and cancel_event.is_set()
+                ):
+                    action = VoiceGesture.CANCEL
+                    reason = (
+                        f"key {name!r} pressed while voice overlay was active"
+                    )
+            else:
+                action = detector.key_up(name)
+                reason = detector.last_decision_reason
+            if action is not None:
+                dispatch(action, reason)
+        except Exception:
+            log_voice_exception("keyboard hook callback failed")
+
+    try:
+        hook = keyboard.hook(on_event)
+    except Exception:
+        log_voice_exception(f"could not install hook for {voice_key!r}")
+        raise
+    log_voice(f"hook installed voice_key={voice_key!r}")
 
     def poll_threshold():
-        while not stopped.is_set():
-            action = detector.poll()
-            if action is not None:
-                dispatch(action)
-            stopped.wait(0.025)
+        try:
+            while not stopped.is_set():
+                action = detector.poll()
+                if action is not None:
+                    dispatch(action, detector.last_decision_reason)
+                stopped.wait(0.025)
+        except Exception:
+            log_voice_exception("voice hold polling thread failed")
+            stopped.set()
 
     polling_thread = threading.Thread(
         target=poll_threshold,
@@ -104,10 +142,12 @@ def register_tap_hold_hotkey(callback, hold_threshold_ms=500,
         name="voice-hotkey-poll",
     )
     polling_thread.start()
+    log_voice(f"hold polling thread started voice_key={voice_key!r}")
 
     def unregister():
         stopped.set()
         keyboard.unhook(hook)
+        log_voice(f"hook unregistered voice_key={voice_key!r}")
 
     unregister.finish_voice_session = detector.finish_voice_session
     return unregister

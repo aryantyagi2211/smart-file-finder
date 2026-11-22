@@ -151,7 +151,7 @@ def test_menu_key_injection_only_happens_on_voice_hold(monkeypatch):
         lambda: injected.append(True),
     )
     unregister = hotkey_listener.register_tap_hold_hotkey(
-        callbacks.append, hold_threshold_ms=30
+        callbacks.append, hold_threshold_ms=200
     )
     try:
         event_handler(SimpleNamespace(
@@ -174,7 +174,7 @@ def test_menu_key_injection_only_happens_on_voice_hold(monkeypatch):
             name="tab", scan_code=15,
             event_type=keyboard.KEY_DOWN, is_repeat=False,
         ))
-        time.sleep(0.08)
+        time.sleep(0.25)
         assert callbacks == []
         assert injected == []
         event_handler(SimpleNamespace(
@@ -190,7 +190,7 @@ def test_menu_key_injection_only_happens_on_voice_hold(monkeypatch):
             name="left alt", scan_code=56,
             event_type=keyboard.KEY_DOWN, is_repeat=False,
         ))
-        time.sleep(0.08)
+        time.sleep(0.25)
         assert callbacks == [VoiceGesture.HOLD_START]
         assert injected == [True]
         event_handler(SimpleNamespace(

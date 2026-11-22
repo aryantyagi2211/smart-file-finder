@@ -54,3 +54,4 @@ Status: **Implemented; real-device checks remain** — holding the configured Al
 - A lone spoken `open` does not search; the overlay asks what to open. OPTIONS results for voice `open` remain choices and are not opened automatically.
 - faster-whisper remains English-only and CPU/int8 by tier. The optional model download and privacy behavior is unchanged: audio stays in memory, is not written or sent, and is cleared after transcription.
 - Real Alt key behavior across apps, menu activation, microphone availability, and accents still require manual verification.
+- Fixed the Alt-hold suppression event being mistaken for another key: the Windows keyboard hook reports injected VK `0xE8` as an unnamed scan code `-232`; INFO voice-stage logs now trace hook, recorder, overlay, transcription, and command dispatch.

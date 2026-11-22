@@ -3,6 +3,8 @@
 import threading
 import time
 
+from observability.logger import log_voice_exception
+
 
 class VoiceTranscriber:
     def __init__(self, model_path=None, idle_seconds=300, whisper_model=None):
@@ -24,12 +26,15 @@ class VoiceTranscriber:
         self._timer.start()
 
     def _unload_if_idle(self):
-        with self._lock:
-            if self._last_used is None:
-                return
-            if time.monotonic() - self._last_used >= self.idle_seconds:
-                self._model = None
-                self._last_used = None
+        try:
+            with self._lock:
+                if self._last_used is None:
+                    return
+                if time.monotonic() - self._last_used >= self.idle_seconds:
+                    self._model = None
+                    self._last_used = None
+        except Exception:
+            log_voice_exception("voice model idle-unload timer failed")
 
     def unload(self):
         with self._lock:

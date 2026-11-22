@@ -9,10 +9,13 @@ data used in debugging/eval, see observability/tracer.py.
 
 from pathlib import Path
 from datetime import datetime
+import threading
+import traceback
 
 from app_paths import get_base_dir
 
 LOG_PATH = get_base_dir() / "observability" / "activity.log"
+
 
 def log(message, log_path=LOG_PATH):
     """Append a timestamped message to the activity log."""
@@ -22,3 +25,17 @@ def log(message, log_path=LOG_PATH):
     line = f"[{timestamp}] {message}\n"
     with open(log_path, "a", encoding="utf-8") as f:
         f.write(line)
+
+
+def log_voice(message):
+    """Write an INFO-level voice event with its executing thread."""
+    thread = threading.current_thread()
+    log(
+        f"INFO voice thread={thread.name}:{threading.get_ident()} "
+        f"{message}"
+    )
+
+
+def log_voice_exception(context):
+    """Write a voice exception and its traceback while still in the except."""
+    log_voice(f"exception: {context}\n{traceback.format_exc()}")

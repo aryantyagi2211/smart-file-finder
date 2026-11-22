@@ -33,6 +33,7 @@ class TapHoldDetector:
         self._voice_started = False
         self._voice_started_at = None
         self._voice_ui_active = False
+        self.last_decision_reason = None
         self._tap_active = False
         self._tap_invalid = False
         self._tap_started_at = None
@@ -64,6 +65,7 @@ class TapHoldDetector:
         if repeated or name in self._pressed:
             return None
 
+        self.last_decision_reason = None
         self._pressed.add(name)
         if name == self.voice_key:
             self._voice_down = True
@@ -83,10 +85,16 @@ class TapHoldDetector:
             if self._voice_started:
                 self._voice_started = False
                 self._voice_ui_active = False
+                self.last_decision_reason = (
+                    f"key {name!r} pressed while voice recording"
+                )
                 return VoiceGesture.CANCEL
 
         if self._voice_ui_active:
             self._voice_ui_active = False
+            self.last_decision_reason = (
+                f"key {name!r} pressed while voice session active"
+            )
             return VoiceGesture.CANCEL
 
         if self._tap_active and name not in self._TAP_KEYS:
@@ -114,6 +122,10 @@ class TapHoldDetector:
         if elapsed >= self.hold_threshold_ms:
             self._voice_started = True
             self._voice_ui_active = True
+            self.last_decision_reason = (
+                f"held {elapsed:.1f} ms; threshold "
+                f"{self.hold_threshold_ms} ms"
+            )
             return VoiceGesture.HOLD_START
         return None
 
@@ -126,6 +138,8 @@ class TapHoldDetector:
                 if self._voice_started and not self._voice_blocked
                 else None
             )
+            if gesture == VoiceGesture.HOLD_END:
+                self.last_decision_reason = "voice key released after hold"
             self._reset_voice_key()
             return gesture
 
@@ -138,6 +152,8 @@ class TapHoldDetector:
             )
             self._pressed.discard(name)
             self._reset_tap()
+            if valid_tap:
+                self.last_decision_reason = "Ctrl+Shift+Space released before threshold"
             return VoiceGesture.TAP if valid_tap else None
 
         self._pressed.discard(name)

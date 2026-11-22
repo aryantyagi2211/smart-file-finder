@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from observability.logger import log_voice
 
 
 class _MicrophoneIcon(QWidget):
@@ -111,6 +112,7 @@ class VoiceOverlay(QWidget):
         self._message_timer.timeout.connect(self.fade_out)
         self._fade_animation = QPropertyAnimation(self, b"windowOpacity", self)
         self._fade_animation.finished.connect(self._finish_fade)
+        self._log_overlay("created")
 
     @property
     def state(self):
@@ -135,6 +137,7 @@ class VoiceOverlay(QWidget):
         self.setWindowOpacity(1.0)
         self.show()
         self.raise_()
+        self._log_overlay("show")
 
     def show_transcript(self, text):
         self._state = "transcript"
@@ -146,6 +149,7 @@ class VoiceOverlay(QWidget):
         self.setWindowOpacity(1.0)
         self.show()
         self.raise_()
+        self._log_overlay("show")
         self._message_timer.start(self.transcript_duration_ms)
 
     def show_message(self, text, duration_ms=1800):
@@ -158,6 +162,7 @@ class VoiceOverlay(QWidget):
         self.setWindowOpacity(1.0)
         self.show()
         self.raise_()
+        self._log_overlay("show")
         self._message_timer.start(duration_ms)
 
     def fade_out(self):
@@ -171,6 +176,7 @@ class VoiceOverlay(QWidget):
         self._fade_animation.setStartValue(self.windowOpacity())
         self._fade_animation.setEndValue(0.0)
         self._fade_animation.start()
+        self._log_overlay("fade_started")
 
     def _fade_in(self):
         self._message_timer.stop()
@@ -178,6 +184,7 @@ class VoiceOverlay(QWidget):
         self.setWindowOpacity(0.0)
         self.show()
         self.raise_()
+        self._log_overlay("show")
         self._fade_animation.setDuration(self.fade_duration_ms)
         self._fade_animation.setStartValue(0.0)
         self._fade_animation.setEndValue(1.0)
@@ -190,9 +197,35 @@ class VoiceOverlay(QWidget):
         self._state = "idle"
         self.dismissed.emit()
 
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self._log_overlay("hide")
+
     def _pulse(self):
         self.icon.phase += 0.28
         self.icon.update()
+
+    def _log_overlay(self, event):
+        app = QApplication.instance()
+        cursor = QCursor.pos()
+        screen = (
+            app.screenAt(cursor) or app.primaryScreen()
+            if app is not None
+            else None
+        )
+        screen_name = screen.name() if screen is not None else None
+        screen_geometry = (
+            screen.availableGeometry().getRect()
+            if screen is not None
+            else None
+        )
+        log_voice(
+            f"overlay {event} state={self._state} "
+            f"geometry={self.geometry().getRect()} screen={screen_name!r} "
+            f"screen_geometry={screen_geometry} "
+            f"opacity={self.windowOpacity():.3f} "
+            f"isVisible={self.isVisible()}"
+        )
 
     def _show_at_cursor_screen(self):
         position = QCursor.pos()

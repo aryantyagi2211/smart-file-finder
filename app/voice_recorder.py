@@ -2,6 +2,8 @@
 
 import threading
 
+from observability.logger import log_voice, log_voice_exception
+
 
 class VoiceRecorderError(RuntimeError):
     pass
@@ -51,19 +53,23 @@ class VoiceRecorder:
             self._frame_count = 0
 
         def callback(indata, frames, time_info, status):
-            if status:
-                return
-            with self._lock:
-                if self._cancelled:
+            try:
+                if status:
+                    log_voice(f"microphone callback status={status}")
                     return
-                frames_copy = indata.copy()
-                remaining = (
-                    self.max_seconds * self.SAMPLE_RATE - self._frame_count
-                )
-                if remaining > 0:
-                    frames_copy = frames_copy[:max(0, remaining)]
-                    self._buffer.append(frames_copy)
-                    self._frame_count += len(frames_copy)
+                with self._lock:
+                    if self._cancelled:
+                        return
+                    frames_copy = indata.copy()
+                    remaining = (
+                        self.max_seconds * self.SAMPLE_RATE - self._frame_count
+                    )
+                    if remaining > 0:
+                        frames_copy = frames_copy[:max(0, remaining)]
+                        self._buffer.append(frames_copy)
+                        self._frame_count += len(frames_copy)
+            except Exception:
+                log_voice_exception("microphone callback failed")
 
         self._stream = self._new_stream(callback)
         try:
@@ -81,7 +87,7 @@ class VoiceRecorder:
                 try:
                     self._stream.close()
                 except Exception:
-                    pass
+                    log_voice_exception("microphone stream close failed")
         with self._lock:
             self._closed = True
             if not self._buffer:
@@ -109,11 +115,11 @@ class VoiceRecorder:
             try:
                 self._stream.stop()
             except Exception:
-                pass
+                log_voice_exception("cancel could not stop microphone stream")
             try:
                 self._stream.close()
             except Exception:
-                pass
+                log_voice_exception("cancel could not close microphone stream")
         self._closed = True
 
     def clear(self):

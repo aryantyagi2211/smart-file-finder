@@ -85,7 +85,7 @@ from PyQt6.QtGui import QIcon
 
 from app.indexing_status import IndexingStatusWidget
 from indexing.embedder import preload_model
-from observability.logger import log
+from observability.logger import log, log_voice, log_voice_exception
 
 import time
 print(f"[TIMING] Script started at {time.time()}")
@@ -203,12 +203,18 @@ class SmartFileFinderApp:
             self.voice_available
             and self._load_voice_setting("voice_enabled", True)
         )
-        log(
-            "Voice search: on"
-            if self.voice_enabled
-            else "Voice search: off"
-            if self.voice_available
-            else "Voice search is not available on this device yet"
+        if self.voice_enabled:
+            voice_reason = "enabled by settings and required imports are present"
+        elif not self.voice_available:
+            voice_reason = getattr(
+                self, "_voice_unavailable_reason", "required imports are missing"
+            )
+        else:
+            voice_reason = "disabled by settings"
+        log_voice(f"enabled={self.voice_enabled} reason={voice_reason}")
+        log_voice(
+            "configured voice key="
+            f"{self._load_voice_setting('voice_key', 'left alt')!r}"
         )
         self._hotkey_unregister = None
         self._search_hotkeys_registered = False
@@ -253,8 +259,8 @@ class SmartFileFinderApp:
         try:
             with open(get_config_path("settings.json"), encoding="utf-8-sig") as file:
                 return json.load(file).get(key, default)
-        except Exception as error:
-            log(f"WARNING: Could not read voice setting {key}: {error}")
+        except Exception:
+            log_voice_exception(f"could not read voice setting {key!r}")
             return default
 
     def _save_voice_setting(self, key, value):
@@ -277,11 +283,15 @@ class SmartFileFinderApp:
             except Exception:
                 missing.append(module_name)
         if missing:
-            log(
-                "Voice search is not available on this device yet: "
+            self._voice_unavailable_reason = (
                 f"missing imports: {', '.join(missing)}"
             )
+            log_voice(
+                "availability=unavailable "
+                f"reason={self._voice_unavailable_reason}"
+            )
             return False
+        self._voice_unavailable_reason = None
         return True
 
     def _update_voice_tray_action(self):
@@ -358,6 +368,21 @@ class SmartFileFinderApp:
     def _on_hardware_tier_ready(self, tier, mode, free_disk_gb):
         set_current_tier(tier)
         self._voice_tier = tier
+        try:
+            model_entry = get_voice_model_for_tier(tier)
+            if model_entry is None:
+                log_voice(f"voice model path not found tier={tier}")
+            else:
+                from app_paths import find_model
+                model_path = find_model(model_entry["repo_id"])
+                log_voice(
+                    f"voice model path found path={model_path}"
+                    if model_path is not None
+                    else "voice model path not found "
+                    f"repo_id={model_entry['repo_id']}"
+                )
+        except Exception:
+            log_voice_exception(f"voice model lookup failed for tier={tier}")
         display_tier = tier.capitalize()
         self.performance_tier_action.setText(
             f"Performance tier: {display_tier} ({mode})"
@@ -437,6 +462,10 @@ class SmartFileFinderApp:
                     "using left alt"
                 )
                 voice_key = "left alt"
+            log_voice(
+                f"registering voice key={voice_key!r} "
+                f"hold_threshold_ms={hold_ms}"
+            )
             self._hotkey_unregister = register_tap_hold_hotkey(
                 self._on_voice_hotkey_event,
                 hold_threshold_ms=hold_ms,
@@ -447,6 +476,9 @@ class SmartFileFinderApp:
                 cancel_event=self._voice_overlay_active,
             )
         else:
+            log_voice(
+                f"voice hook not installed; enabled={self.voice_enabled}"
+            )
             handle = register_hotkey(self._show_input_bar, DEFAULT_HOTKEY)
             self._hotkey_unregister = lambda: unregister_hotkey(handle)
 
@@ -464,6 +496,7 @@ class SmartFileFinderApp:
             print(f"Watching for changes in: {folder}")
 
     def _on_voice_hotkey_event(self, gesture):
+        log_voice(f"controller received gesture={gesture.value}")
         if gesture == VoiceGesture.TAP:
             self.hotkey_bridge.triggered.emit()
         elif gesture == VoiceGesture.HOLD_START:
@@ -474,6 +507,7 @@ class SmartFileFinderApp:
             self.voice_bridge.state.emit("cancel")
 
     def _on_voice_state(self, state):
+        log_voice(f"controller state={state}")
         if state == "hold_start":
             self._start_voice_recording()
         elif state == "hold_end":
@@ -483,18 +517,26 @@ class SmartFileFinderApp:
 
     def _start_voice_recording(self):
         if not self.voice_enabled or self._recording:
+            log_voice(
+                "recorder start skipped "
+                f"enabled={self.voice_enabled} recording={self._recording}"
+            )
             return
         if self._voice_tier is None:
             self._on_voice_error("Voice search is not available yet")
             return
         model = missing_voice_model_for_tier(self._voice_tier)
         if model is not None:
+            log_voice(
+                f"voice model missing tier={self._voice_tier}; "
+                "opening consent setup"
+            )
             free_disk = self._load_voice_setting("free_disk_unused", None)
             try:
                 import psutil
                 free_disk = psutil.disk_usage(str(get_config_path("settings.json").parent)).free / 1e9
             except Exception:
-                pass
+                log_voice_exception("could not read free disk for voice setup")
             self._voice_setup_window = SetupWindow(
                 self._voice_tier,
                 [model],
@@ -512,21 +554,32 @@ class SmartFileFinderApp:
                 from app_paths import find_model
                 model_path = find_model(model_entry["repo_id"])
             if model_path is None:
+                log_voice(
+                    f"voice model unavailable tier={self._voice_tier}"
+                )
                 raise VoiceRecorderError(
                     "Voice model is missing. Voice stays off until it is downloaded."
                 )
+            log_voice(f"voice model path found path={model_path}")
             if self.voice_transcriber is None:
                 self.voice_transcriber = VoiceTranscriber(model_path=model_path)
+            recorder_started_at = time.perf_counter()
             self.voice_recorder.start()
+            log_voice(
+                "recorder start "
+                f"seconds={time.perf_counter() - recorder_started_at:.3f} "
+                f"samples=0 sample_rate={self.voice_recorder.SAMPLE_RATE}"
+            )
             self._recording = True
             self.input_bar.hide()
             self._voice_overlay_active.set()
             self._pending_voice_transcript = None
             self.voice_overlay.show_listening()
         except VoiceRecorderError as error:
+            log_voice_exception(f"recorder start failed: {error}")
             self._on_voice_error(str(error))
         except Exception as error:
-            log(f"Could not start voice recording: {error}")
+            log_voice_exception(f"recorder start failed: {error}")
             self._on_voice_error(
                 "Could not open the microphone. Check your audio device."
             )
@@ -544,16 +597,32 @@ class SmartFileFinderApp:
 
     def _finish_voice_recording(self):
         if not self._recording:
+            log_voice("recorder stop skipped; no active recording")
             return
         self._recording = False
+        recorder_stopped_at = time.perf_counter()
         try:
             audio = self.voice_recorder.stop()
         except Exception as error:
+            log_voice_exception(f"recorder stop failed: {error}")
             self._on_voice_error(str(error))
             return
         if audio is None:
+            log_voice(
+                "recorder stop "
+                f"seconds={time.perf_counter() - recorder_stopped_at:.3f} "
+                "samples=0"
+            )
             self._show_voice_message("Didn't catch that", 1500)
             return
+        sample_count = len(audio)
+        sample_rate = self.voice_recorder.SAMPLE_RATE
+        log_voice(
+            "recorder stop "
+            f"seconds={time.perf_counter() - recorder_stopped_at:.3f} "
+            f"samples={sample_count} "
+            f"recorded_seconds={sample_count / sample_rate:.3f}"
+        )
         self.voice_overlay.show_transcribing()
         worker = threading.Thread(
             target=self._transcribe_voice_audio,
@@ -564,10 +633,12 @@ class SmartFileFinderApp:
         worker.start()
 
     def _transcribe_voice_audio(self, audio):
+        transcription_started_at = time.perf_counter()
+        log_voice(f"transcription start samples={len(audio)}")
         try:
             text = self.voice_transcriber.transcribe(audio)
-        except Exception as error:
-            log(f"Voice transcription failed: {error}")
+        except Exception:
+            log_voice_exception("transcription failed")
             self.voice_bridge.error.emit(
                 "Could not transcribe that recording."
             )
@@ -576,11 +647,17 @@ class SmartFileFinderApp:
             try:
                 audio.fill(0)
             except Exception:
-                pass
+                log_voice_exception("could not clear in-memory voice audio")
+        log_voice(
+            f"transcription end "
+            f"seconds={time.perf_counter() - transcription_started_at:.3f} "
+            f"text={text!r}"
+        )
         self.voice_bridge.text.emit(text)
 
     def _on_voice_text(self, text):
         text = str(text or "").strip()
+        log_voice(f"recognized text={text!r}")
         if not text:
             self._show_voice_message("Didn't catch that", 1500)
             return
@@ -592,7 +669,7 @@ class SmartFileFinderApp:
 
     def _on_voice_error(self, message):
         self._cancel_recording()
-        log(f"Voice search error: {message}")
+        log_voice(f"voice error message={message!r}")
         self._show_voice_message(message, 2000)
 
     def _cancel_voice(self):
@@ -604,10 +681,11 @@ class SmartFileFinderApp:
         self._recording = False
         try:
             self.voice_recorder.cancel()
-        except Exception as error:
-            log(f"Could not discard cancelled voice recording: {error}")
+        except Exception:
+            log_voice_exception("could not discard cancelled voice recording")
 
     def _cancel_voice_session(self):
+        log_voice("voice session cancelled")
         self._cancel_recording()
         self._pending_voice_transcript = None
         self._voice_overlay_active.clear()
@@ -619,12 +697,16 @@ class SmartFileFinderApp:
         self.voice_overlay.fade_out()
 
     def _show_voice_message(self, message, duration_ms):
+        log_voice(
+            f"voice message shown text={message!r} duration_ms={duration_ms}"
+        )
         self._pending_voice_transcript = None
         self._voice_overlay_active.set()
         self.voice_overlay.show_message(message, duration_ms)
 
     def _on_voice_overlay_dismissed(self):
         transcript = self._pending_voice_transcript
+        log_voice(f"overlay dismissed pending_transcript={transcript!r}")
         if transcript is None:
             self._voice_overlay_active.clear()
             finish_session = getattr(
@@ -637,7 +719,12 @@ class SmartFileFinderApp:
         auto_search = self._pending_voice_auto_search
         self._pending_voice_transcript = None
         parsed = parse_voice_command(transcript)
+        log_voice(
+            f"parsed command={parsed.command.value} query={parsed.query!r} "
+            f"auto_search={auto_search}"
+        )
         if parsed.command == Command.OPEN and not parsed.query:
+            log_voice("action=prompt_for_open_query")
             self._show_voice_message(
                 "Say what to open, for example: open corrective rag",
                 2000,
@@ -645,6 +732,7 @@ class SmartFileFinderApp:
             return
 
         if not auto_search:
+            log_voice("action=show_editable_input_bar")
             self._pending_voice_transcript = transcript
             self.input_bar.text_input.setText(transcript)
             self.input_bar.show_and_focus()
@@ -662,6 +750,7 @@ class SmartFileFinderApp:
         )
         if finish_session is not None:
             finish_session()
+        log_voice(f"action=dispatch_{parsed.command.value}")
         self._execute_parsed_command(parsed)
 
     def _show_input_bar(self):
@@ -677,6 +766,10 @@ class SmartFileFinderApp:
         ):
             self._pending_voice_transcript = None
             parsed = parse_voice_command(raw_text)
+            log_voice(
+                f"parsed command={parsed.command.value} query={parsed.query!r} "
+                "source=editable_voice_transcript"
+            )
             self._execute_parsed_command(parsed)
             return
         self._pending_voice_transcript = None
@@ -695,6 +788,7 @@ class SmartFileFinderApp:
         result = handle_query(parsed.query)
 
         if result.get("action") == "options":
+            log_voice("action result=options; awaiting a user choice")
             self.options_group = OptionsPopupGroup(
                 result["options"], anchor=self.input_bar
             )
@@ -703,6 +797,7 @@ class SmartFileFinderApp:
             return
 
         if not result["found"]:
+            log_voice("action result=no_match")
             QMessageBox.information(
                 self.input_bar,
                 "No match found",
@@ -721,10 +816,13 @@ class SmartFileFinderApp:
         )
 
         if should_auto_open(parsed.command, result.get("action")):
+            log_voice("action invoked=open")
             self.result_card._handle_open()
         elif parsed.command == Command.SHOW:
+            log_voice("action invoked=show")
             self.result_card._handle_show()
         else:
+            log_voice("action invoked=find")
             self.result_card.show()
 
     def _on_option_chosen(self, action, file_path):
