@@ -37,10 +37,22 @@ def tiny_registry(tmp_path, monkeypatch):
         "status": "ready",
         "files": {"config.json": 4, "weights.bin": 4},
     }
+    voice_model = {
+        "name": "tiny-test-voice",
+        "purpose": "voice",
+        "repo_id": "test/tiny-voice",
+        "revision": "fedcba9876543210",
+        "download_size_gb": 0.000000008,
+        "download_size_bytes": 8,
+        "tiers": ["small"],
+        "status": "ready",
+        "files": {"config.json": 4, "weights.bin": 4},
+    }
     config_path = tmp_path / "model_tiers.json"
     config_path.write_text(json.dumps({
         "tiers": {"small": {"vision_model_repo_id": vision_model["repo_id"]}},
-        "models": [model, vision_model],
+        "models": [model, vision_model, voice_model],
+        "optional_models": [],
     }), encoding="utf-8")
     monkeypatch.setattr(app_paths, "get_config_path", lambda name: config_path)
     monkeypatch.setattr(model_downloader, "get_config_path", lambda name: config_path)
@@ -67,10 +79,13 @@ def _write_snapshot(cache_dir, model):
 def test_missing_models_lists_only_models_without_complete_pinned_files(
     tiny_registry, monkeypatch
 ):
-    model, vision_model, models_dir, _ = tiny_registry
+    model, vision_model, models_dir, config_path = tiny_registry
+    voice_model = json.loads(
+        config_path.read_text(encoding="utf-8")
+    )["models"][2]
 
     assert model_downloader.missing_models_for_tier("small") == [
-        model, vision_model
+        model, vision_model, voice_model
     ]
     snapshot = _write_snapshot(models_dir, model)
     (snapshot / ".smart-file-finder-complete.json").write_text(
@@ -79,12 +94,23 @@ def test_missing_models_lists_only_models_without_complete_pinned_files(
     )
 
     assert app_paths.find_model(model["repo_id"]) == snapshot
-    assert model_downloader.missing_models_for_tier("small") == [vision_model]
+    assert model_downloader.missing_models_for_tier("small") == [
+        vision_model, voice_model
+    ]
     vision_snapshot = _write_snapshot(models_dir, vision_model)
     (vision_snapshot / ".smart-file-finder-complete.json").write_text(
         json.dumps({
             "repo_id": vision_model["repo_id"],
             "revision": vision_model["revision"],
+        }),
+        encoding="utf-8",
+    )
+    assert model_downloader.missing_models_for_tier("small") == [voice_model]
+    voice_snapshot = _write_snapshot(models_dir, voice_model)
+    (voice_snapshot / ".smart-file-finder-complete.json").write_text(
+        json.dumps({
+            "repo_id": voice_model["repo_id"],
+            "revision": voice_model["revision"],
         }),
         encoding="utf-8",
     )
@@ -211,16 +237,24 @@ def test_download_requires_explicit_click_and_retries_missing_model(
 
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     app = QApplication.instance() or QApplication([])
-    model, _, _, _ = tiny_registry
+    app.setQuitOnLastWindowClosed(False)
+    model, vision_model, _, config_path = tiny_registry
+    voice_model = json.loads(
+        config_path.read_text(encoding="utf-8")
+    )["models"][2]
     monkeypatch.setattr(setup_window, "find_model", lambda repo_id: None)
     calls = []
+    statuses = []
 
     def fake_download(model_arg, progress_cb, cancel_event):
         calls.append(model_arg["repo_id"])
         progress_cb(8, 8, 1000)
 
     monkeypatch.setattr(setup_window, "download_model", fake_download)
-    window = setup_window.SetupWindow("small", [model], 10)
+    window = setup_window.SetupWindow(
+        "small", [model, vision_model, voice_model], 10
+    )
+    window.status_changed.connect(statuses.append)
     assert calls == []
 
     window.download_button.click()
@@ -230,7 +264,17 @@ def test_download_requires_explicit_click_and_retries_missing_model(
         time.sleep(0.01)
     app.processEvents()
 
-    assert calls == [model["repo_id"]]
+    assert calls == [
+        model["repo_id"],
+        vision_model["repo_id"],
+        voice_model["repo_id"],
+    ]
+    assert statuses == [
+        "Downloading embedding model: tiny-test-model...",
+        "Downloading vision model: tiny-test-vision...",
+        "Downloading voice model: tiny-test-voice...",
+        "Model downloads complete; preparing to load...",
+    ]
     assert window.total_bar.value() == 1000
     window.close()
 
@@ -250,15 +294,34 @@ def test_startup_opens_setup_only_when_a_required_model_is_missing(
         def setText(self, text):
             self.text = text
 
+        def setToolTip(self, text):
+            self.tooltip = text
+
+    class FakeTierStatus:
+        def set_performance_tier(self, tier, mode):
+            self.selection = (tier, mode)
+
+        def show_status(self, message):
+            self.status = message
+
+        def show(self):
+            self.shown = True
+
+    class FakeTrayIcon:
+        def showMessage(self, *args):
+            self.message = args
+
     class FakeApp:
         def quit(self):
             pass
 
     class FakeSetupWindow:
-        def __init__(self, *args):
+        def __init__(self, *args, **kwargs):
             self.args = args
+            self.kwargs = kwargs
             self.ready = FakeSignal()
             self.cancelled = FakeSignal()
+            self.status_changed = FakeSignal()
             self.shown = False
 
         def show(self):
@@ -266,8 +329,12 @@ def test_startup_opens_setup_only_when_a_required_model_is_missing(
 
     instance = object.__new__(app_main.SmartFileFinderApp)
     instance.performance_tier_action = FakeAction()
+    instance.status_window = FakeTierStatus()
+    instance.tray_icon = FakeTrayIcon()
     instance.app = FakeApp()
     instance.setup_window = None
+    instance.voice_enabled = False
+    instance.voice_available = True
     ready = []
     created = []
     monkeypatch.setattr(app_main, "set_current_tier", lambda tier: None)
@@ -277,9 +344,13 @@ def test_startup_opens_setup_only_when_a_required_model_is_missing(
         "_on_models_ready",
         lambda self: ready.append(True),
     )
-    monkeypatch.setattr(app_main, "SetupWindow", lambda *args: created.append(
-        FakeSetupWindow(*args)
-    ) or created[-1])
+    monkeypatch.setattr(
+        app_main,
+        "SetupWindow",
+        lambda *args, **kwargs: created.append(
+            FakeSetupWindow(*args, **kwargs)
+        ) or created[-1],
+    )
 
     instance._on_hardware_tier_ready("small", "auto", 10)
 
@@ -295,6 +366,22 @@ def test_startup_opens_setup_only_when_a_required_model_is_missing(
     assert created[0].shown
     assert created[0].args[1] == [model]
 
+    voice_model = {
+        "name": "Whisper tiny.en",
+        "purpose": "voice",
+        "repo_id": "test/voice",
+    }
+    instance.voice_enabled = True
+    monkeypatch.setattr(
+        app_main,
+        "missing_voice_model_for_tier",
+        lambda tier: voice_model,
+    )
+    created.clear()
+    instance._on_hardware_tier_ready("small", "auto", 10)
+
+    assert created[0].args[1] == [model]
+
 
 def test_model_registry_defaults_keep_untested_big_model_optional(
     tmp_path, monkeypatch
@@ -306,7 +393,7 @@ def test_model_registry_defaults_keep_untested_big_model_optional(
     config_path = app_paths.get_config_path("model_tiers.json")
     config = json.loads(config_path.read_text(encoding="utf-8"))
 
-    assert len([model for model in config["models"] if model["status"] == "ready"]) == 4
+    assert len([model for model in config["models"] if model["status"] == "ready"]) == 7
     assert any(
         model["status"] == "untested"
         and model["repo_id"] == "google/gemma-4-E4B-it"
@@ -317,7 +404,7 @@ def test_model_registry_defaults_keep_untested_big_model_optional(
     assert config["tiers"]["big"]["min_free_disk_gb"] == 17
 
 
-def test_each_tier_requires_only_its_embedding_and_primary_vision_model():
+def test_each_tier_requires_embedding_primary_vision_and_voice_models():
     small = model_downloader.models_for_tier("small")
     mid = model_downloader.models_for_tier("mid")
     big = model_downloader.models_for_tier("big")
@@ -325,14 +412,17 @@ def test_each_tier_requires_only_its_embedding_and_primary_vision_model():
     assert {model["repo_id"] for model in small} == {
         "sentence-transformers/all-mpnet-base-v2",
         "HuggingFaceTB/SmolVLM-500M-Instruct",
+        "Systran/faster-whisper-tiny.en",
     }
     assert {model["repo_id"] for model in mid} == {
         "sentence-transformers/all-mpnet-base-v2",
         "google/gemma-4-E2B-it",
+        "Systran/faster-whisper-base.en",
     }
     assert {model["repo_id"] for model in big} == {
         "sentence-transformers/all-mpnet-base-v2",
         "google/gemma-4-E2B-it",
+        "Systran/faster-whisper-small.en",
     }
     assert "HuggingFaceTB/SmolVLM-500M-Instruct" not in {
         model["repo_id"] for model in mid + big
@@ -359,6 +449,15 @@ def test_optional_e4b_setting_replaces_big_primary_model(
         "status": "ready",
         "files": {"config.json": 1},
     })
+    config["models"].append({
+        "name": "Whisper small.en",
+        "purpose": "voice",
+        "repo_id": "test/voice",
+        "revision": "voice",
+        "tiers": ["big"],
+        "status": "ready",
+        "files": {"config.json": 1},
+    })
     config["optional_models"] = [{
         "name": "Gemma E4B",
         "purpose": "vision",
@@ -380,6 +479,7 @@ def test_optional_e4b_setting_replaces_big_primary_model(
     assert {model["repo_id"] for model in required} == {
         "test/tiny-model",
         "google/gemma-4-E4B-it",
+        "test/voice",
     }
 
 

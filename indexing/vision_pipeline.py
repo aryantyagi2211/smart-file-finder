@@ -261,7 +261,8 @@ def get_active_vision_model():
     return _active_model_repo_id
 
 
-def describe_image(file_path, status_callback=None):
+def describe_image(file_path, status_callback=None,
+                   model_status_callback=None):
     """Describe an image locally, falling back through lower tiers if needed."""
     global _model, _processor, _loaded_model, _active_model_repo_id
     _active_model_repo_id = None
@@ -301,6 +302,11 @@ def describe_image(file_path, status_callback=None):
             try:
                 if _loaded_model != repo_id:
                     unload_vision_model()
+                    if model_status_callback is not None:
+                        model_status_callback(
+                            "Loading vision model: "
+                            f"{model_entry.get('name', repo_id)}..."
+                        )
                     _model, _processor = _load_model(
                         model_entry, model_path, hardware
                     )

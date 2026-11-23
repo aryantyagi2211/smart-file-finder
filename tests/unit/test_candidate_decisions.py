@@ -184,7 +184,9 @@ def _popup_group(tmp_path, count=3, file_names=None):
 
 def _qt_app(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
-    return QApplication.instance() or QApplication([])
+    app = QApplication.instance() or QApplication([])
+    app.setQuitOnLastWindowClosed(False)
+    return app
 
 
 def test_three_popup_cards_are_ranked_and_fit_screen(tmp_path, monkeypatch):

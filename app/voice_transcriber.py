@@ -7,11 +7,21 @@ from observability.logger import log_voice_exception
 
 
 class VoiceTranscriber:
-    def __init__(self, model_path=None, idle_seconds=300, whisper_model=None):
+    def __init__(
+        self,
+        model_path=None,
+        idle_seconds=300,
+        whisper_model=None,
+        model_status_callback=None,
+        model_name="Whisper",
+    ):
         self.model_path = model_path
         self.idle_seconds = idle_seconds
         self._model = whisper_model
+        self.model_status_callback = model_status_callback
+        self.model_name = model_name
         self._lock = threading.Lock()
+        self._transcription_lock = threading.Lock()
         self._last_used = None
         self._timer = None
 
@@ -57,23 +67,43 @@ class VoiceTranscriber:
                 ) from error
             if self.model_path is None:
                 raise RuntimeError("A local voice model has not been selected.")
+            if self.model_status_callback is not None:
+                self.model_status_callback(
+                    f"Loading voice model: {self.model_name}..."
+                )
             self._model = WhisperModel(
                 str(self.model_path),
                 device="cpu",
                 compute_type="int8",
                 local_files_only=True,
             )
+            if self.model_status_callback is not None:
+                self.model_status_callback("Voice model loaded")
             return self._model
 
     def transcribe(self, audio):
-        model = self.get_model()
-        segments, _ = model.transcribe(
+        return self._transcribe(audio, beam_size=5, vad_filter=True)
+
+    def transcribe_partial(self, audio):
+        """Decode a live snapshot quickly; final transcription remains authoritative."""
+        return self._transcribe(
             audio,
-            language="en",
-            beam_size=5,
-            vad_filter=True,
+            beam_size=1,
+            vad_filter=False,
+            condition_on_previous_text=False,
         )
-        text = " ".join(segment.text.strip() for segment in segments).strip()
+
+    def _transcribe(self, audio, **options):
+        with self._transcription_lock:
+            model = self.get_model()
+            segments, _ = model.transcribe(
+                audio,
+                language="en",
+                **options,
+            )
+            text = " ".join(
+                segment.text.strip() for segment in segments
+            ).strip()
         with self._lock:
             self._last_used = time.monotonic()
         self._schedule_unload()

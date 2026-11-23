@@ -41,6 +41,7 @@ def test_offscreen_voice_pill_state_sequence(monkeypatch):
 
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     app = QApplication.instance() or QApplication([])
+    app.setQuitOnLastWindowClosed(False)
     pill = VoicePill()
     pill.show_listening()
     assert pill.label.text().startswith("Listening...")

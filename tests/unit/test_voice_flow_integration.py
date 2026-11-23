@@ -30,6 +30,9 @@ class _FakeRecorder:
     def stop(self):
         return np.zeros(16000, dtype=np.float32)
 
+    def snapshot(self):
+        return np.zeros(16000, dtype=np.float32)
+
     def cancel(self):
         self.cancel_calls += 1
 
@@ -40,6 +43,9 @@ class _FakeTranscriber:
 
     def transcribe(self, _audio):
         return self.transcript
+
+    def transcribe_partial(self, _audio):
+        return f"{self.transcript} so far"
 
 
 class _FakeSignal:
@@ -88,6 +94,7 @@ def test_alt_voice_flow_dispatches_through_real_query_handler(
 ):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     qt_app = QApplication.instance() or QApplication([])
+    qt_app.setQuitOnLastWindowClosed(False)
     gui_thread = threading.get_ident()
     controller = main.SmartFileFinderApp.__new__(main.SmartFileFinderApp)
 
@@ -136,6 +143,8 @@ def test_alt_voice_flow_dispatches_through_real_query_handler(
     controller._recording = False
     controller._voice_setup_window = None
     controller._voice_overlay_active = threading.Event()
+    controller._live_transcription_stop = threading.Event()
+    controller._live_transcription_thread = None
     controller._pending_voice_transcript = None
     controller._pending_voice_auto_search = True
     controller._hotkey_unregister = None
@@ -155,8 +164,12 @@ def test_alt_voice_flow_dispatches_through_real_query_handler(
     controller.voice_bridge = main.VoiceBridge()
     controller.voice_bridge.state.connect(controller._on_voice_state)
     controller.voice_bridge.text.connect(controller._on_voice_text)
+    controller.voice_bridge.partial_text.connect(
+        controller._on_voice_partial_text
+    )
     controller.voice_bridge.error.connect(controller._on_voice_error)
     overlay.dismissed.connect(controller._on_voice_overlay_dismissed)
+    monkeypatch.setattr(main, "LIVE_TRANSCRIPTION_INTERVAL_SECONDS", 0.01)
 
     monkeypatch.setattr(
         main,
@@ -249,7 +262,18 @@ def test_alt_voice_flow_dispatches_through_real_query_handler(
         assert recorder.cancel_calls == 0
         assert recorder.start_thread == gui_thread
         assert overlay.isVisible()
-        assert overlay.label.text() == "Listening..."
+        assert overlay.label.text() in {
+            "Listening...",
+            f"{transcript} so far",
+        }
+        deadline = time.monotonic() + 2
+        while (
+            overlay.label.text() != f"{transcript} so far"
+            and time.monotonic() < deadline
+        ):
+            qt_app.processEvents()
+            time.sleep(0.005)
+        assert overlay.label.text() == f"{transcript} so far"
 
         release_alt.set()
         event_thread.join(timeout=1)
@@ -297,6 +321,9 @@ def test_alt_voice_flow_dispatches_through_real_query_handler(
         event_thread.join(timeout=1)
         if controller._hotkey_unregister is not None:
             controller._hotkey_unregister()
+        controller._live_transcription_stop.set()
+        if controller._live_transcription_thread is not None:
+            controller._live_transcription_thread.join(timeout=1)
         if controller.result_card is not None:
             controller.result_card.close()
         overlay.close()

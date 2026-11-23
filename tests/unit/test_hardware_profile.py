@@ -36,6 +36,21 @@ def test_selects_big_for_high_end_gpu_and_ram():
     assert tier == "big"
 
 
+def test_disk_requirement_can_step_down_multiple_tiers():
+    tier, reason = hardware_profile.choose_tier(
+        _profile(32, 16, free_disk_gb=16, gpu_name="NVIDIA RTX")
+    )
+
+    assert tier == "small"
+    assert "small:" in reason
+
+
+def test_user_facing_tier_names():
+    assert hardware_profile.get_tier_display_name("small") == "Low"
+    assert hardware_profile.get_tier_display_name("mid") == "Mid"
+    assert hardware_profile.get_tier_display_name("big") == "High"
+
+
 def test_no_gpu_with_eight_or_thirty_two_gb_ram_selects_small():
     for ram in (8, 32):
         tier, _ = hardware_profile.choose_tier(_profile(ram))
@@ -64,26 +79,25 @@ def test_arm64_without_cuda_selects_small_and_notes_unimplemented_npu(
     assert profile["note"] in reason
 
 
-def test_low_disk_steps_down_one_tier_and_reports_reason():
+def test_low_disk_checks_all_tier_minimums_and_reports_when_none_fit():
     tier, reason = hardware_profile.choose_tier(
         _profile(32, 16, free_disk_gb=0.5, gpu_name="NVIDIA RTX")
     )
 
-    assert tier == "mid"
-    assert "stepped down to mid" in reason
-    assert "17 GB minimum" in reason
+    assert tier == "small"
+    assert "below the small tier's 3 GB minimum" in reason
 
 
-def test_valid_override_wins_even_below_hardware_minimums(monkeypatch):
+def test_manual_override_cannot_exceed_hardware_or_disk_eligibility(monkeypatch):
     warnings = []
     monkeypatch.setattr(hardware_profile, "log", warnings.append)
 
     tier, reason = hardware_profile.choose_tier(
-        _profile(8), override="big"
+        _profile(8, free_disk_gb=10), override="big"
     )
 
-    assert tier == "big"
-    assert "manual override" in reason
+    assert tier == "small"
+    assert "requested big, but only small meets hardware and disk minimums" in reason
     assert any("WARNING" in message and "override" in message for message in warnings)
 
 
@@ -229,7 +243,7 @@ def test_disk_minimums_follow_selected_required_model_payloads(
     settings_path.write_text(json.dumps(settings), encoding="utf-8")
 
     optional_config = hardware_profile.load_tier_config()
-    assert optional_config["tiers"]["big"]["min_free_disk_gb"] == 25
+    assert optional_config["tiers"]["big"]["min_free_disk_gb"] == 26
     assert optional_config["tiers"]["mid"]["min_free_disk_gb"] == 17
 
 
@@ -246,3 +260,71 @@ def test_settings_missing_file_defaults_to_auto(tmp_path, monkeypatch):
         (project / "config" / "settings.json").read_text(encoding="utf-8")
     )
     assert settings["performance_tier"] == "auto"
+
+
+def test_indexing_status_shows_selected_performance_tier(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtWidgets import QApplication
+    from app.indexing_status import IndexingStatusWidget
+
+    qt_app = QApplication.instance() or QApplication([])
+    qt_app.setQuitOnLastWindowClosed(False)
+    widget = IndexingStatusWidget()
+    widget.show_hardware_scan()
+    assert widget.tier_label.text() == "Reading PC specifications..."
+    assert "Reading RAM" in widget.status_label.text()
+    widget.set_performance_tier("mid", "auto")
+    widget.show_status("Indexing (Documents): notes.pdf")
+    widget.mark_complete()
+    widget.show()
+
+    assert widget.tier_label.text() == "Performance: Mid (automatic)"
+    assert widget.status_label.text() == "Watching for changes"
+    assert widget.height() == 58
+    assert widget.isVisible()
+    widget.close()
+    qt_app.processEvents()
+
+
+def test_saved_hardware_report_is_reused_for_startup_display(
+    tmp_path, monkeypatch
+):
+    from app import main
+
+    profile_path = tmp_path / "hardware_profile.json"
+    monkeypatch.setattr(
+        main, "get_hardware_profile_path", lambda: profile_path
+    )
+    assert main._load_saved_hardware_report() is None
+
+    profile_path.write_text(json.dumps({
+        "performance_tier": "mid",
+        "override": "auto",
+    }), encoding="utf-8")
+    assert main._load_saved_hardware_report()["performance_tier"] == "mid"
+
+
+def test_setup_window_explains_tier_and_pending_model_downloads(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtWidgets import QApplication, QLabel
+    from app.setup_window import SetupWindow
+
+    qt_app = QApplication.instance() or QApplication([])
+    qt_app.setQuitOnLastWindowClosed(False)
+    window = SetupWindow(
+        "mid",
+        [{
+            "name": "Embedding model",
+            "download_size_bytes": 1000,
+            "files": {},
+        }],
+        20,
+        selection_reason="mid: 16 GB RAM and 4 GB VRAM",
+        selection_mode="auto",
+    )
+    labels = [label.text() for label in window.findChildren(QLabel)]
+
+    assert any("Detected performance tier: Mid (automatic)" in text for text in labels)
+    assert any("Only the missing model files" in text for text in labels)
+    window.close()
+    qt_app.processEvents()

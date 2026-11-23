@@ -18,6 +18,11 @@ from observability.logger import log
 
 _current_tier = "small"
 _TIER_ORDER = ("small", "mid", "big")
+_TIER_DISPLAY_NAMES = {
+    "small": "Low",
+    "mid": "Mid",
+    "big": "High",
+}
 _ARM64_NOTE = (
     "Snapdragon NPU path not implemented yet, using CPU/GPU tiers"
 )
@@ -30,6 +35,11 @@ def _machine_architecture():
     if machine in ("arm64", "aarch64"):
         return "ARM64"
     return platform.machine() or "Unknown"
+
+
+def get_tier_display_name(tier):
+    """Return the user-facing name for an internal performance tier."""
+    return _TIER_DISPLAY_NAMES.get(tier, str(tier).capitalize())
 
 
 def _detect_nvidia_smi():
@@ -209,58 +219,55 @@ def choose_tier(profile, override="auto", tiers=None):
         normalized_override = "auto"
 
     summary = _hardware_summary(profile)
-    if normalized_override != "auto":
-        selected = normalized_override
-        requirements = tier_definitions[selected]
-        unmet = []
-        if not _meets_tier(profile, requirements):
-            if _profile_value(profile, "ram_gb") < float(
-                requirements.get("min_ram_gb", 0)
-            ):
-                unmet.append(
-                    f"{requirements.get('min_ram_gb', 0)} GB RAM required"
-                )
-            if _profile_value(profile, "vram_gb") < float(
-                requirements.get("min_vram_gb", 0)
-            ):
-                unmet.append(
-                    f"{requirements.get('min_vram_gb', 0)} GB VRAM required"
-                )
-        if _profile_value(profile, "free_disk_gb") < float(
-            requirements.get("min_free_disk_gb", 0)
-        ):
-            unmet.append(
-                f"{requirements.get('min_free_disk_gb', 0)} GB free disk required"
-            )
-        if unmet:
-            log(
-                f"WARNING: Performance tier override {selected!r} is above "
-                f"hardware minimums: {', '.join(unmet)}"
-            )
-        reason = f"{selected}: manual override; {summary}"
-        if unmet:
-            reason += f" (below minimums: {', '.join(unmet)})"
-        return selected, reason
-
-    selected = "small"
-    for candidate in reversed(_TIER_ORDER):
-        if _meets_tier(profile, tier_definitions[candidate]):
-            selected = candidate
-            break
-
-    reason = f"{selected}: {summary}"
     free_disk = _profile_value(profile, "free_disk_gb")
-    disk_minimum = float(
-        tier_definitions[selected].get("min_free_disk_gb", 0)
-    )
-    if selected != "small" and free_disk < disk_minimum:
-        previous_tier = _TIER_ORDER[_TIER_ORDER.index(selected) - 1]
+    eligible = [
+        candidate
+        for candidate in _TIER_ORDER
+        if _meets_tier(profile, tier_definitions[candidate])
+        and free_disk >= float(
+            tier_definitions[candidate].get("min_free_disk_gb", 0)
+        )
+    ]
+
+    if eligible:
+        highest_eligible = eligible[-1]
+        selected = highest_eligible
+        if normalized_override != "auto":
+            requested_index = _TIER_ORDER.index(normalized_override)
+            eligible_index = _TIER_ORDER.index(highest_eligible)
+            if normalized_override in eligible:
+                selected = normalized_override
+            elif requested_index > eligible_index:
+                log(
+                    f"WARNING: Performance tier override "
+                    f"{normalized_override!r} exceeds detected hardware or "
+                    "free-disk requirements; using the highest eligible "
+                    f"tier {highest_eligible!r}"
+                )
+            reason = f"{selected}: manual override; {summary}"
+            if selected != normalized_override:
+                reason += (
+                    f" (requested {normalized_override}, but only "
+                    f"{highest_eligible} meets hardware and disk minimums)"
+                )
+        else:
+            reason = f"{selected}: {summary}"
+    else:
+        selected = "small"
+        disk_minimum = float(
+            tier_definitions["small"].get("min_free_disk_gb", 0)
+        )
         reason = (
-            f"{selected} stepped down to {previous_tier}: "
-            f"{free_disk:g} GB free disk is below its "
+            f"small: {free_disk:g} GB free disk is below the small tier's "
             f"{disk_minimum:g} GB minimum; {summary}"
         )
-        selected = previous_tier
+        log(
+            "WARNING: No performance tier meets the detected hardware and "
+            "free-disk requirements; using small"
+        )
+        if normalized_override != "auto":
+            reason += f" (requested {normalized_override})"
+
     if profile.get("architecture") == "ARM64":
         reason += f"; {_ARM64_NOTE}"
     return selected, reason

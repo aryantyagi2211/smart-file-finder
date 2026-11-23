@@ -11,7 +11,13 @@ fake-climbing-percentage version after real user testing showed the fake
 version gave no way to tell "still working" from "silently stuck."
 """
 
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLabel, QApplication
+from PyQt6.QtWidgets import (
+    QWidget,
+    QHBoxLayout,
+    QVBoxLayout,
+    QLabel,
+    QApplication,
+)
 from PyQt6.QtCore import Qt, QPropertyAnimation, pyqtProperty
 from PyQt6.QtGui import QColor, QPainter, QBrush
 from PyQt6.QtGui import QIcon
@@ -80,28 +86,44 @@ class IndexingStatusWidget(QWidget):
             | Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setFixedSize(320, 30)
-        self._standard_width = 320
+        self.setFixedSize(560, 58)
+        self._standard_width = 560
         self._had_error = False
         self._setup_ui()
         self._position_top_right()
 
     def _setup_ui(self):
-        row = QHBoxLayout(self)
-        row.setContentsMargins(4, 4, 4, 4)
-        row.setSpacing(8)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setSpacing(2)
 
+        tier_row = QHBoxLayout()
+        tier_row.setContentsMargins(0, 0, 0, 0)
+        tier_row.setSpacing(6)
+        self.tier_label = QLabel("Reading PC specifications...")
+        self.tier_label.setStyleSheet("""
+            color: #8fc7ff;
+            font-size: 12px;
+            font-weight: 700;
+            background: transparent;
+        """)
+        tier_row.addWidget(self.tier_label)
+        tier_row.addStretch(1)
+        layout.addLayout(tier_row)
+
+        status_row = QHBoxLayout()
+        status_row.setContentsMargins(0, 0, 0, 0)
+        status_row.setSpacing(8)
         self.dot = PulsingDot()
-        row.addWidget(self.dot)
-
-        self.status_label = QLabel("Starting...")
+        status_row.addWidget(self.dot)
+        self.status_label = QLabel("Reading RAM, graphics, and storage...")
         self.status_label.setStyleSheet("""
             color: #eaeaea;
             font-size: 12px;
             font-weight: 700;
             background: transparent;
         """)
-        row.addWidget(self.status_label)
+        status_row.addWidget(self.status_label)
 
         self.percent_label = QLabel("")
         self.percent_label.setStyleSheet("""
@@ -110,8 +132,27 @@ class IndexingStatusWidget(QWidget):
             font-weight: 700;
             background: transparent;
         """)
-        row.addWidget(self.percent_label)
-        row.addStretch(1)
+        status_row.addWidget(self.percent_label)
+        status_row.addStretch(1)
+        layout.addLayout(status_row)
+
+    def set_performance_tier(self, tier, mode):
+        from app.hardware_profile import get_tier_display_name
+
+        selection = "automatic" if mode == "auto" else "manual"
+        self.tier_label.setText(
+            f"Performance: {get_tier_display_name(tier)} ({selection})"
+        )
+        self.tier_label.setToolTip(
+            "The selected tier controls the local vision and voice models."
+        )
+
+    def show_hardware_scan(self):
+        self.tier_label.setText("Reading PC specifications...")
+        self.tier_label.setToolTip(
+            "Checking this PC's memory, graphics, processor, and storage."
+        )
+        self.show_status("Reading RAM, graphics, and available storage...")
 
     def _position_top_right(self):
         screen = QApplication.primaryScreen().availableGeometry()
@@ -119,40 +160,35 @@ class IndexingStatusWidget(QWidget):
         y = screen.y() + 16
         self.move(x, y)
 
+    def show_status(self, message):
+        if self.width() != 560 or self.height() != 58:
+            self.setFixedSize(560, 58)
+            self._position_top_right()
+        self.status_label.setText(message)
+        self.percent_label.clear()
+
     def show_loading_model(self):
         """Distinct state for when a model is being loaded (can itself
         take a few seconds) -- separate from actively indexing files."""
-        self.status_label.setText("Loading model...")
-        self.percent_label.setText("")
+        self.show_status("Loading models...")
 
     def show_progress(self, folder_name, filename_short, files_done, files_total):
         """Real progress shown as a count: X/Y files in the current folder."""
-        if self.width() != self._standard_width:
-            self.setFixedSize(self._standard_width, 30)
-            self._position_top_right()
-        self.status_label.setText(f"Indexing ({folder_name}): {filename_short}")
+        self.show_status(f"Indexing ({folder_name}): {filename_short}")
         self.percent_label.setText(f"{files_done}/{files_total}")
 
     def show_error(self, filename_short):
         """A file failed to index -- dot turns red, text shows which file."""
-        if self.width() != self._standard_width:
-            self.setFixedSize(self._standard_width, 30)
-            self._position_top_right()
         self._had_error = True
         self.dot.set_error_state(True)
-        self.status_label.setText(f"Error: {filename_short}")
+        self.show_status(f"Error: {filename_short}")
 
     def show_notice(self, message):
         """Show a non-error indexing notice such as filename-only image mode."""
-        self.setFixedSize(560, 30)
-        self._position_top_right()
-        self.status_label.setText(message)
-        self.percent_label.setText("")
+        self.show_status(message)
 
     def mark_complete(self):
-        """Called once all indexing is fully done, right before this
-        widget is hidden. Resets the error state for next time."""
+        """Show the persistent post-scan watcher state."""
         self.dot.set_error_state(False)
         self._had_error = False
-        self.status_label.setText("Indexing complete")
-        self.percent_label.setText("100%")
+        self.show_status("Watching for changes")

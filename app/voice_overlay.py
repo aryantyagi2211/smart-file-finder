@@ -145,6 +145,9 @@ class VoiceOverlay(QWidget):
         self._safety_timer = QTimer(self)
         self._safety_timer.setSingleShot(True)
         self._safety_timer.timeout.connect(self._safety_timeout)
+        self._fade_fallback_timer = QTimer(self)
+        self._fade_fallback_timer.setSingleShot(True)
+        self._fade_fallback_timer.timeout.connect(self._finish_fade)
         self._fade_animation = QPropertyAnimation(self, b"windowOpacity", self)
         self._fade_animation.finished.connect(self._finish_fade)
         self._log_overlay("created")
@@ -162,6 +165,13 @@ class VoiceOverlay(QWidget):
         self._show_at_cursor_screen()
         self._fade_in()
         self._start_safety_timer()
+
+    def show_live_transcript(self, text):
+        if self._state != "listening" or not self.isVisible():
+            return
+        self.label.setText(text)
+        self._start_safety_timer()
+        self._log_overlay("live_transcript")
 
     def show_transcribing(self):
         self._state = "transcribing"
@@ -243,6 +253,7 @@ class VoiceOverlay(QWidget):
         self._pulse_timer.stop()
         self._fade_animation.stop()
         self._safety_timer.stop()
+        self._fade_fallback_timer.stop()
         self.hide()
         self._state = "idle"
         self.dismissed.emit()
@@ -258,6 +269,7 @@ class VoiceOverlay(QWidget):
         self._fade_animation.setStartValue(self.windowOpacity())
         self._fade_animation.setEndValue(0.0)
         self._fade_animation.start()
+        self._fade_fallback_timer.start(self.fade_duration_ms + 25)
         self._log_overlay("fade_started")
 
     def _fade_in(self):
@@ -276,11 +288,17 @@ class VoiceOverlay(QWidget):
         if self._state != "fading":
             return
         self._safety_timer.stop()
+        self._fade_fallback_timer.stop()
         self.hide()
         self._state = "idle"
         self.dismissed.emit()
 
     def hideEvent(self, event):
+        self._message_timer.stop()
+        self._pulse_timer.stop()
+        self._safety_timer.stop()
+        self._fade_fallback_timer.stop()
+        self._fade_animation.stop()
         super().hideEvent(event)
         self._log_overlay("hide")
 

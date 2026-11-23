@@ -16,7 +16,8 @@ GOLDEN_SET_PATH = Path(__file__).resolve().parent / "golden_set.json"
 
 def _read_registry():
     with open(PROJECT_ROOT / "config" / "model_tiers.json", encoding="utf-8-sig") as file:
-        return json.load(file)["models"]
+        registry = json.load(file)
+    return registry["models"] + registry.get("optional_models", [])
 
 
 def _progress_printer(name):
@@ -48,6 +49,7 @@ def _worker(args):
     from indexing.backfill_index import index_one_file
     from indexing.embedder import preload_model
     from indexing.vision_pipeline import VISION_MODELS, unload_vision_model
+    from indexing import vision_pipeline
     from storage.metadata_store import get_file_metadata
     from storage.vector_db.vector_store import _get_collection
 
@@ -56,6 +58,10 @@ def _worker(args):
         model for model in VISION_MODELS
         if model.get("repo_id") == args.repo
     )
+    if args.big_vision_model:
+        vision_pipeline.get_big_vision_model_setting = (
+            lambda: args.big_vision_model
+        )
     if args.tier == "small":
         for model in VISION_MODELS:
             if (
@@ -118,12 +124,21 @@ def _worker(args):
                 ids=[stored_path], include=["metadatas"]
             )
             metadata = (stored.get("metadatas") or [None])[0]
+            model_used = (
+                (get_file_metadata(image_path) or {}).get("vision_model")
+            )
+            if (
+                args.repo == "google/gemma-4-E4B-it"
+                and model_used != args.repo
+            ):
+                raise RuntimeError(
+                    f"Gemma E4B was not used for {image_path.name}; "
+                    f"active vision model was {model_used or 'filename-only'}."
+                )
             descriptions[image_path.name] = {
                 "text": metadata.get("description", "[filename-only]")
                 if metadata else "[filename-only]",
-                "vision_model": (
-                    (get_file_metadata(image_path) or {}).get("vision_model")
-                ),
+                "vision_model": model_used,
             }
 
         from app import query_handler
@@ -203,9 +218,7 @@ def _worker(args):
         unload_vision_model()
 
 
-def _run_parent():
-    from app_paths import find_model
-    registry = _read_registry()
+def _build_comparisons(registry, include_e4b=False):
     comparisons = [
         (model, "small")
         for model in registry
@@ -225,6 +238,51 @@ def _run_parent():
         if model.get("purpose") == "vision" and "mid" in model.get("tiers", [])
     )
     comparisons.append((mid_model, "mid"))
+    if include_e4b:
+        e4b_model = next(
+            (
+                model for model in registry
+                if model.get("purpose") == "vision"
+                and model.get("setting_value") == "gemma-4-E4B-it"
+                and model.get("status") in {"ready", "untested"}
+            ),
+            None,
+        )
+        if e4b_model is None:
+            raise RuntimeError(
+                "The model registry does not contain a usable Gemma E4B entry."
+            )
+        comparisons.append((e4b_model, "big"))
+    return comparisons, mid_model
+
+
+def _require_e4b_hardware():
+    from app.hardware_profile import detect_hardware
+
+    profile = detect_hardware()
+    requirements = {
+        "ram_gb": (24, "GB RAM"),
+        "vram_gb": (12, "GB NVIDIA VRAM"),
+        "free_disk_gb": (26, "GB free disk"),
+    }
+    unmet = [
+        f"{minimum} {label} required (detected {profile.get(key, 0) or 0})"
+        for key, (minimum, label) in requirements.items()
+        if float(profile.get(key) or 0) < minimum
+    ]
+    if unmet:
+        raise RuntimeError(
+            "Gemma E4B comparison requires a compatible test PC: "
+            + "; ".join(unmet)
+        )
+
+
+def _run_parent(include_e4b=False):
+    from app_paths import find_model
+    registry = _read_registry()
+    if include_e4b:
+        _require_e4b_hardware()
+    comparisons, mid_model = _build_comparisons(registry, include_e4b)
 
     for model, _tier in comparisons:
         _ensure_model(model)
@@ -255,6 +313,11 @@ def _run_parent():
                 "--output",
                 str(output_path),
             ]
+            if tier == "big":
+                command.extend([
+                    "--big-vision-model",
+                    "gemma-4-E4B-it",
+                ])
             subprocess.run(
                 command,
                 cwd=PROJECT_ROOT,
@@ -279,10 +342,11 @@ def _run_parent():
                 f"- {name} [{description['vision_model'] or 'filename-only'}]: "
                 f"{description['text']}"
             )
-    print(
-        "\nGemma E4B was not run: this machine has 4 GB VRAM, "
-        "below its 12 GB tier minimum."
-    )
+    if not include_e4b:
+        print(
+            "\nGemma E4B was not included. On a compatible PC, use "
+            "--include-e4b to benchmark it."
+        )
 
 
 def main():
@@ -291,11 +355,20 @@ def main():
     parser.add_argument("--repo")
     parser.add_argument("--tier")
     parser.add_argument("--output")
+    parser.add_argument(
+        "--include-e4b",
+        action="store_true",
+        help=(
+            "Download and benchmark optional Gemma E4B; requires at least "
+            "24 GB RAM, 12 GB NVIDIA VRAM, and 26 GB free disk."
+        ),
+    )
+    parser.add_argument("--big-vision-model")
     args = parser.parse_args()
     if args.worker:
         _worker(args)
     else:
-        _run_parent()
+        _run_parent(include_e4b=args.include_e4b)
 
 
 if __name__ == "__main__":

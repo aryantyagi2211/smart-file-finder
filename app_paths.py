@@ -168,37 +168,6 @@ MODEL_TIER_DEFAULTS = {
                 "vocab.json": 800662,
             },
         },
-    ],
-    "optional_models": [
-        {
-            "name": "Gemma 4 E4B-it",
-            "purpose": "vision",
-            "repo_id": "google/gemma-4-E4B-it",
-            "revision": "4ecc2ba63bcac23ba4a767fc87025b1450f84c9c",
-            "download_size_gb": 16.024781005,
-            "download_size_bytes": 16024781005,
-            "repository_size_gb": 16.024810531,
-            "repository_size_bytes": 16024810531,
-            "repository_file_count": 9,
-            "family": "gemma4",
-            "requires_cuda": True,
-            "for_tier": "big",
-            "setting_value": "gemma-4-E4B-it",
-            "status": "untested",
-            "prompt": "Describe this image in one or two sentences, focusing on what it depicts.",
-            "max_new_tokens": 60,
-            "license": "apache-2.0",
-            "gated": False,
-            "files": {
-                "chat_template.jinja": 18569,
-                "config.json": 5145,
-                "generation_config.json": 208,
-                "model.safetensors": 15992595884,
-                "processor_config.json": 1689,
-                "tokenizer.json": 32156428,
-                "tokenizer_config.json": 3082,
-            },
-        },
         {
             "name": "Whisper tiny.en",
             "purpose": "voice",
@@ -260,6 +229,37 @@ MODEL_TIER_DEFAULTS = {
                 "model.bin": 483545366,
                 "tokenizer.json": 2128466,
                 "vocabulary.txt": 422309,
+            },
+        },
+    ],
+    "optional_models": [
+        {
+            "name": "Gemma 4 E4B-it",
+            "purpose": "vision",
+            "repo_id": "google/gemma-4-E4B-it",
+            "revision": "4ecc2ba63bcac23ba4a767fc87025b1450f84c9c",
+            "download_size_gb": 16.024781005,
+            "download_size_bytes": 16024781005,
+            "repository_size_gb": 16.024810531,
+            "repository_size_bytes": 16024810531,
+            "repository_file_count": 9,
+            "family": "gemma4",
+            "requires_cuda": True,
+            "for_tier": "big",
+            "setting_value": "gemma-4-E4B-it",
+            "status": "untested",
+            "prompt": "Describe this image in one or two sentences, focusing on what it depicts.",
+            "max_new_tokens": 60,
+            "license": "apache-2.0",
+            "gated": False,
+            "files": {
+                "chat_template.jinja": 18569,
+                "config.json": 5145,
+                "generation_config.json": 208,
+                "model.safetensors": 15992595884,
+                "processor_config.json": 1689,
+                "tokenizer.json": 32156428,
+                "tokenizer_config.json": 3082,
             },
         },
     ],
@@ -453,7 +453,7 @@ def get_primary_vision_model_for_tier(
 def get_required_models_for_tier(
     tier, config=None, big_vision_model=None
 ):
-    """Return only the embedding and primary vision model required by a tier."""
+    """Return the embedding, primary vision, and voice models for a tier."""
     registry = config or load_model_registry()
     embeddings = [
         model for model in registry.get("models", [])
@@ -464,12 +464,13 @@ def get_required_models_for_tier(
     vision = get_primary_vision_model_for_tier(
         tier, registry, big_vision_model=big_vision_model
     )
-    if len(embeddings) != 1 or vision is None:
+    voice = get_voice_model_for_tier(tier, registry)
+    if len(embeddings) != 1 or vision is None or voice is None:
         raise ValueError(
-            f"Model registry does not define one embedding and one primary "
-            f"vision model for tier {tier!r}"
+            f"Model registry does not define one embedding, one primary "
+            f"vision model, and one voice model for tier {tier!r}"
         )
-    return embeddings + [vision]
+    return embeddings + [vision, voice]
 
 
 def get_voice_model_for_tier(tier, config=None):

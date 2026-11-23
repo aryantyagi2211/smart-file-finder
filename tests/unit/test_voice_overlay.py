@@ -1,3 +1,5 @@
+import time
+
 import pytest
 from PyQt6.QtCore import QPoint, QRect, QSize, Qt
 from PyQt6.QtTest import QTest
@@ -10,7 +12,17 @@ from app.voice_overlay import VoiceOverlay, voice_overlay_position
 
 def _app(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
-    return QApplication.instance() or QApplication([])
+    app = QApplication.instance() or QApplication([])
+    app.setQuitOnLastWindowClosed(False)
+    return app
+
+
+def _wait_for(app, predicate, timeout_ms=2000):
+    deadline = time.monotonic() + timeout_ms / 1000
+    while not predicate() and time.monotonic() < deadline:
+        app.processEvents()
+        QTest.qWait(20)
+    return predicate()
 
 
 def test_overlay_is_click_through_and_does_not_accept_focus(monkeypatch):
@@ -29,7 +41,7 @@ def test_overlay_shows_listening_transcribing_transcript_and_fades(
     monkeypatch,
 ):
     app = _app(monkeypatch)
-    overlay = VoiceOverlay(transcript_duration_ms=30, fade_duration_ms=20)
+    overlay = VoiceOverlay(transcript_duration_ms=60, fade_duration_ms=20)
     dismissed = []
     overlay.dismissed.connect(lambda: dismissed.append(True))
 
@@ -43,8 +55,7 @@ def test_overlay_shows_listening_transcribing_transcript_and_fades(
 
     overlay.show_transcript("open corrective rag")
     assert overlay.label.text() == "open corrective rag"
-    QTest.qWait(100)
-    assert dismissed == [True]
+    assert _wait_for(app, lambda: dismissed == [True])
     assert not overlay.isVisible()
     overlay.close()
 
@@ -62,8 +73,7 @@ def test_overlay_displays_empty_and_microphone_error_messages(monkeypatch):
     )
     assert "microphone" in overlay.label.text().lower()
     overlay.fade_out()
-    QTest.qWait(30)
-    assert not overlay.isVisible()
+    assert _wait_for(app, lambda: not overlay.isVisible())
     overlay.close()
 
 
@@ -77,8 +87,7 @@ def test_overlay_feedback_is_small_faded_and_dismisses(monkeypatch):
     assert "font-size: 11px" in overlay.label.styleSheet()
     assert "rgba(247, 249, 255, 175)" in overlay.label.styleSheet()
 
-    QTest.qWait(300)
-    assert not overlay.isVisible()
+    assert _wait_for(app, lambda: not overlay.isVisible())
     overlay.close()
 
 

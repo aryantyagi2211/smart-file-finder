@@ -52,6 +52,9 @@ def test_fake_stream_caps_at_max_and_too_short_returns_none(tmp_path):
         min_seconds=0.6,
     )
     recorder.start()
+    snapshot = recorder.snapshot()
+    assert snapshot is not None
+    assert len(snapshot) == recorder.SAMPLE_RATE
     audio = recorder.stop()
     assert len(audio) == recorder.SAMPLE_RATE
     recorder.clear()

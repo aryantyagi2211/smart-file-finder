@@ -175,7 +175,8 @@ def _warn_image_fallback(status_callback=None, reason="", message=None):
 
 
 def index_one_file(file_path, force=False, status_callback=None,
-                   retain_vision_model=False):
+                   retain_vision_model=False,
+                   model_status_callback=None):
     """
     Route, process, and store a single file (text or image) -- but skip
     it entirely if it's already indexed and hasn't changed since. Also
@@ -261,11 +262,18 @@ def index_one_file(file_path, force=False, status_callback=None,
         elif category == "image":
             can_describe, reason = image_description_status()
             if can_describe:
+                describe_options = {
+                    "status_callback": lambda message: _warn_image_fallback(
+                        status_callback, message=message
+                    )
+                }
+                if model_status_callback is not None:
+                    describe_options["model_status_callback"] = (
+                        model_status_callback
+                    )
                 description = describe_image(
                     path_str,
-                    status_callback=lambda message: _warn_image_fallback(
-                        status_callback, message=message
-                    ),
+                    **describe_options,
                 )
                 vision_model = get_active_vision_model()
                 if vision_model is not None:
@@ -323,7 +331,8 @@ def index_one_file(file_path, force=False, status_callback=None,
     return f"[INDEXED - image] {path_str} -> \"{description}\""
 
 def backfill(settings_path=None, progress_callback=None, error_callback=None,
-             indexed_folders=None, status_callback=None):
+             indexed_folders=None, status_callback=None,
+             model_status_callback=None):
     """
     Recursively scan every folder listed in settings.json and index all
     supported files found.
@@ -382,11 +391,18 @@ def backfill(settings_path=None, progress_callback=None, error_callback=None,
             progress_callback(folder_name, short_name, i, total)
 
         try:
+            index_options = {
+                "force": rebuild_index,
+                "status_callback": status_callback,
+                "retain_vision_model": True,
+            }
+            if model_status_callback is not None:
+                index_options["model_status_callback"] = (
+                    model_status_callback
+                )
             status = index_one_file(
                 file_path,
-                force=rebuild_index,
-                status_callback=status_callback,
-                retain_vision_model=True,
+                **index_options,
             )
             if "SKIPPED - unknown type" in status:
                 pass  # not an error, just an unsupported file type, no red icon

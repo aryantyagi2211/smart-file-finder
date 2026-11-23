@@ -108,11 +108,15 @@ content the way you'd naturally describe it.
   describing what it shows.
 - **Fully local and private** — every model (embeddings, vision) runs on
   your own CPU/GPU. Nothing is uploaded anywhere, ever.
+- **Hardware-matched model downloads** — the app detects a performance
+  tier before model setup, tells you which tier and model files it selected,
+  and downloads only the required files for that tier.
 - **Global hotkey launcher** — `Ctrl+Shift+Space` opens a small, always-on-top
   search bar from anywhere in Windows, similar to Spotlight or PowerToys Run.
 - **Hold-to-talk voice search** — hold Left Alt by itself to speak a query.
   Spoken `open`, `show`, `find`, and `search` commands work without a slash;
-  a floating, click-through overlay shows listening state and the transcript.
+  a floating, click-through overlay shows listening state and a live,
+  continually updated partial transcript while you speak.
 - **Live, incremental indexing** — a background watcher picks up new and
   changed files automatically while the app runs; files that haven't
   changed are never re-processed.
@@ -174,10 +178,49 @@ shortcut from `shell:startup` or disable it in **Task Manager → Startup apps**
 > after a restart, open **Task Manager → Startup apps** and enable
 > "SmartFileFinder" manually. This is a one-time step.
 
+### Performance tiers and model downloads
+
+Smart File Finder supports Windows PCs with or without an NVIDIA GPU. Before
+model setup, it checks available RAM, NVIDIA GPU memory, and free disk space,
+selects a performance tier, and shows the tier and the exact missing files
+and download size. The selected tier is also shown in the indexing status
+and system-tray menu.
+
+Automatic selection chooses the highest tier whose RAM, NVIDIA VRAM, and free
+disk minimums are all met: High (internal Big) requires 24 GB RAM and 12 GB
+NVIDIA VRAM; Mid requires 12 GB RAM and 4 GB NVIDIA VRAM; otherwise the app
+uses Low (internal Small). A manual tier setting cannot exceed the detected
+hardware and disk requirements. CPU-only PCs are supported by Low.
+
+All tiers use the same `all-mpnet-base-v2` embedding model, so tier selection
+does not invalidate an existing vector index. Each tier downloads one primary
+vision model:
+
+| Tier | Models downloaded during first setup | Approx. total download | Minimum free disk |
+|---|---|---:|---:|
+| Low (Small) | `all-mpnet-base-v2` (0.44 GB) + SmolVLM-500M (1.02 GB) + Whisper tiny.en (78 MB) | 1.54 GB | 3 GB |
+| Mid | `all-mpnet-base-v2` (0.44 GB) + Gemma 4 E2B-it 4-bit (10.28 GB) + Whisper base.en (148 MB) | 10.87 GB | 17 GB |
+| High (Big) | `all-mpnet-base-v2` (0.44 GB) + Gemma 4 E2B-it 4-bit (10.28 GB) + Whisper small.en (486 MB) | 11.20 GB | 17 GB |
+
+These are model payload sizes; additional free space is required for download
+and setup. On the first run, the status panel briefly reports that it is
+reading PC specifications, then shows the selected Low, Mid, or High tier.
+Later runs show the saved tier immediately while checking the current setup.
+During setup, each model download is named in sequence; after confirmation,
+the embedding, vision, and voice models are downloaded in one setup flow.
+During startup, the status distinguishes embedding, vision, and voice model
+loading from indexing progress. Vision loads when an image is indexed; voice
+loads on the first voice search. Voice transcription runs locally on CPU.
+Small-tier image understanding runs on CPU; Mid and Big use the CUDA-capable
+Gemma vision model. Big currently uses the same E2B model as Mid; the stronger
+E4B model remains untested and is not included in the standard setup. If
+selected for Big, E4B adds about 16.02 GB and raises the free-disk minimum to
+26 GB.
+
 ### Option 2 — Run from source
 
-Requires Python 3.10 and a CUDA-capable GPU for reasonable indexing
-speed (the app also runs on CPU, just more slowly for image indexing).
+Requires Python 3.10. A CUDA-capable NVIDIA GPU can improve image indexing;
+CPU-only Windows PCs are supported and select the small tier.
 
 ```bash
 git clone <repository-url>

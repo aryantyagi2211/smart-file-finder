@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from app.hardware_profile import get_tier_display_name
 
 from app_paths import find_model
 from indexing.model_downloader import (
@@ -25,15 +26,17 @@ def _format_mb(byte_count):
 
 class _DownloadSignals(QObject):
     progress = pyqtSignal(int, int, int, float)
+    status = pyqtSignal(str)
     finished = pyqtSignal(bool, str)
 
 
 class SetupWindow(QWidget):
     ready = pyqtSignal()
     cancelled = pyqtSignal()
+    status_changed = pyqtSignal(str)
 
     def __init__(self, tier, models, free_disk_gb=None, parent=None,
-                 purpose="setup"):
+                 purpose="setup", selection_reason="", selection_mode="auto"):
         super().__init__(parent)
         self.tier = tier
         self.models = list(models)
@@ -103,6 +106,7 @@ class SetupWindow(QWidget):
 
         self._signals = _DownloadSignals(self)
         self._signals.progress.connect(self._on_progress)
+        self._signals.status.connect(self.status_changed.emit)
         self._signals.finished.connect(self._on_finished)
         self._model_bars = []
         self._model_details = []
@@ -117,6 +121,20 @@ class SetupWindow(QWidget):
         )
         heading.setObjectName("heading")
         layout.addWidget(heading)
+
+        selection = (
+            "automatic"
+            if selection_mode == "auto"
+            else "manual"
+        )
+        reason_text = f" {selection_reason}" if selection_reason else ""
+        tier_summary = QLabel(
+            f"Detected performance tier: {get_tier_display_name(tier)} "
+            f"({selection}).{reason_text}"
+        )
+        tier_summary.setObjectName("detail")
+        tier_summary.setWordWrap(True)
+        layout.addWidget(tier_summary)
 
         names = ", ".join(model["name"] for model in self.models)
         total_bytes = sum(self._totals)
@@ -134,7 +152,9 @@ class SetupWindow(QWidget):
             )
         else:
             detail = QLabel(
-                f"The {tier} tier needs these model files: {names}. "
+                f"Only the missing model files for the "
+                f"{get_tier_display_name(tier)} tier will be "
+                f"downloaded: {names}. "
                 f"Total download: {_format_mb(total_bytes)}. "
                 f"Free disk space: {free_text}."
             )
@@ -150,11 +170,17 @@ class SetupWindow(QWidget):
                 "download from Hugging Face."
             )
         else:
-            privacy = QLabel(
+            privacy_text = (
                 "The only network use is downloading public model files from "
                 "Hugging Face once. No user file, query or telemetry is ever "
                 "sent. After setup the app works fully offline."
             )
+            if any(model.get("purpose") == "voice" for model in self.models):
+                privacy_text += (
+                    " The included Whisper model runs locally; recorded audio "
+                    "stays in memory and is never saved or uploaded."
+                )
+            privacy = QLabel(privacy_text)
         privacy.setObjectName("detail")
         privacy.setWordWrap(True)
         layout.addWidget(privacy)
@@ -232,6 +258,14 @@ class SetupWindow(QWidget):
                         index, self._totals[index], self._totals[index], 0.0
                     )
                     continue
+                purpose = {
+                    "embedding": "embedding",
+                    "vision": "vision",
+                    "voice": "voice",
+                }.get(model.get("purpose"), "additional")
+                self._signals.status.emit(
+                    f"Downloading {purpose} model: {model['name']}..."
+                )
                 download_model(
                     model,
                     progress_cb=lambda done, total, speed, model_index=index:
@@ -279,6 +313,9 @@ class SetupWindow(QWidget):
             self.close()
             return
         if success:
+            self.status_changed.emit(
+                "Model downloads complete; preparing to load..."
+            )
             self.ready.emit()
             self.close()
             return

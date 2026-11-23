@@ -92,12 +92,19 @@ def test_mocked_smolvlm_loader_describes_image_with_registry_prompt(
         lambda *_args: (_FakeModel(), processor),
     )
     vision_pipeline.reset_vision_state()
+    model_statuses = []
 
-    description = vision_pipeline.describe_image(image_path)
+    description = vision_pipeline.describe_image(
+        image_path,
+        model_status_callback=model_statuses.append,
+    )
 
     assert description == "A small blue icon with a white cloud."
     assert processor.messages[0]["content"][1]["text"] == model["prompt"]
     assert vision_pipeline.get_active_vision_model() == model["repo_id"]
+    assert model_statuses == [
+        f"Loading vision model: {model['repo_id']}..."
+    ]
     vision_pipeline.reset_vision_state()
 
 

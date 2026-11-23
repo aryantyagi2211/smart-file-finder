@@ -107,6 +107,19 @@ class VoiceRecorder:
             self._buffer = []
             return result
 
+    def snapshot(self):
+        """Return a copy of the audio captured so far, without stopping."""
+        with self._lock:
+            if not self._buffer:
+                return None
+            try:
+                import numpy as np
+                return np.concatenate(self._buffer, axis=0).reshape(-1)
+            except Exception as error:
+                raise VoiceRecorderError(
+                    f"Could not snapshot in-memory voice audio: {error}"
+                ) from error
+
     def cancel(self):
         with self._lock:
             self._cancelled = True

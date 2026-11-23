@@ -149,6 +149,69 @@
           "tokenizer_config.json": 28336,
           "vocab.json": 800662
         }
+      },
+      {
+        "name": "Whisper tiny.en",
+        "purpose": "voice",
+        "repo_id": "Systran/faster-whisper-tiny.en",
+        "revision": "0d3d19a32d3338f10357c0889762bd8d64bbdeba",
+        "download_size_gb": 0.078090594,
+        "download_size_bytes": 78090594,
+        "tiers": ["small"],
+        "status": "ready",
+        "license": "mit",
+        "gated": false,
+        "language": "en",
+        "engine": "faster-whisper",
+        "compute_type": "int8",
+        "files": {
+          "config.json": 2317,
+          "model.bin": 75537502,
+          "tokenizer.json": 2128466,
+          "vocabulary.txt": 422309
+        }
+      },
+      {
+        "name": "Whisper base.en",
+        "purpose": "voice",
+        "repo_id": "Systran/faster-whisper-base.en",
+        "revision": "3d3d5dee26484f91867d81cb899cfcf72b96be6c",
+        "download_size_gb": 0.14776951,
+        "download_size_bytes": 147769510,
+        "tiers": ["mid"],
+        "status": "ready",
+        "license": "mit",
+        "gated": false,
+        "language": "en",
+        "engine": "faster-whisper",
+        "compute_type": "int8",
+        "files": {
+          "config.json": 2227,
+          "model.bin": 145216508,
+          "tokenizer.json": 2128466,
+          "vocabulary.txt": 422309
+        }
+      },
+      {
+        "name": "Whisper small.en",
+        "purpose": "voice",
+        "repo_id": "Systran/faster-whisper-small.en",
+        "revision": "d1d751a5f8271d482d14ca55d9e2deeebbae577f",
+        "download_size_gb": 0.486098798,
+        "download_size_bytes": 486098798,
+        "tiers": ["big"],
+        "status": "ready",
+        "license": "mit",
+        "gated": false,
+        "language": "en",
+        "engine": "faster-whisper",
+        "compute_type": "int8",
+        "files": {
+          "config.json": 2657,
+          "model.bin": 483545366,
+          "tokenizer.json": 2128466,
+          "vocabulary.txt": 422309
+        }
       }
   ],
   "optional_models": [
@@ -179,69 +242,6 @@
         "processor_config.json": 1689,
         "tokenizer.json": 32156428,
         "tokenizer_config.json": 3082
-      }
-    },
-    {
-      "name": "Whisper tiny.en",
-      "purpose": "voice",
-      "repo_id": "Systran/faster-whisper-tiny.en",
-      "revision": "0d3d19a32d3338f10357c0889762bd8d64bbdeba",
-      "download_size_gb": 0.078090594,
-      "download_size_bytes": 78090594,
-      "tiers": ["small"],
-      "status": "ready",
-      "license": "mit",
-      "gated": false,
-      "language": "en",
-      "engine": "faster-whisper",
-      "compute_type": "int8",
-      "files": {
-        "config.json": 2317,
-        "model.bin": 75537502,
-        "tokenizer.json": 2128466,
-        "vocabulary.txt": 422309
-      }
-    },
-    {
-      "name": "Whisper base.en",
-      "purpose": "voice",
-      "repo_id": "Systran/faster-whisper-base.en",
-      "revision": "3d3d5dee26484f91867d81cb899cfcf72b96be6c",
-      "download_size_gb": 0.14776951,
-      "download_size_bytes": 145216508,
-      "tiers": ["mid"],
-      "status": "ready",
-      "license": "mit",
-      "gated": false,
-      "language": "en",
-      "engine": "faster-whisper",
-      "compute_type": "int8",
-      "files": {
-        "config.json": 2227,
-        "model.bin": 145216508,
-        "tokenizer.json": 2128466,
-        "vocabulary.txt": 422309
-      }
-    },
-    {
-      "name": "Whisper small.en",
-      "purpose": "voice",
-      "repo_id": "Systran/faster-whisper-small.en",
-      "revision": "d1d751a5f8271d482d14ca55d9e2deeebbae577f",
-      "download_size_gb": 0.486098798,
-      "download_size_bytes": 486098798,
-      "tiers": ["big"],
-      "status": "ready",
-      "license": "mit",
-      "gated": false,
-      "language": "en",
-      "engine": "faster-whisper",
-      "compute_type": "int8",
-      "files": {
-        "config.json": 2657,
-        "model.bin": 483545366,
-        "tokenizer.json": 2128466,
-        "vocabulary.txt": 422309
       }
     }
   ]
