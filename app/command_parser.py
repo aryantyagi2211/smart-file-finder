@@ -66,7 +66,8 @@ def parse_voice_command(text):
     if not raw_text:
         return ParsedCommand(command=Command.FIND, query="")
 
-    first_word, separator, rest = raw_text.partition(" ")
+    parts = raw_text.split(maxsplit=1)
+    first_word = parts[0]
     spoken_command = first_word.strip(string.punctuation)
     command = {
         "open": Command.OPEN,
@@ -77,17 +78,18 @@ def parse_voice_command(text):
     if command is None:
         return ParsedCommand(command=Command.FIND, query=raw_text)
 
-    query = rest.lstrip(string.punctuation + " \t\r\n") if separator else ""
+    query = parts[1] if len(parts) > 1 else ""
+    query = query.lstrip(string.punctuation + string.whitespace)
     fillers = {"me", "up", "the", "my", "a", "an"}
     while query:
-        first_query_word, query_separator, remaining = query.partition(" ")
+        query_parts = query.split(maxsplit=1)
+        first_query_word = query_parts[0]
         if first_query_word.strip(string.punctuation) not in fillers:
             break
-        query = (
-            remaining.lstrip(string.punctuation + " \t\r\n")
-            if query_separator
-            else ""
-        )
+        query = query_parts[1] if len(query_parts) > 1 else ""
+        query = query.lstrip(string.punctuation + string.whitespace)
+
+    query = query.rstrip(string.punctuation + string.whitespace)
 
     return ParsedCommand(command=command, query=query)
 

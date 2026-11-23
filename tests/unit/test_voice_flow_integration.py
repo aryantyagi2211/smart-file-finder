@@ -1,16 +1,17 @@
 import os
 import threading
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import keyboard
 import numpy as np
 import pytest
-from PyQt6.QtCore import QObject
-from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
-from app import main
+from agent.planner import Candidate
+from app import main, query_handler, result_card
+from app.input_bar import InputBar
 from app.voice_overlay import VoiceOverlay
 
 
@@ -41,51 +42,86 @@ class _FakeTranscriber:
         return self.transcript
 
 
-class _FakeInputBar:
-    def __init__(self):
-        self.text_input = SimpleNamespace(setText=lambda _text: None)
-
-    def hide(self):
-        pass
-
-    def show_and_focus(self):
-        pass
+class _FakeSignal:
+    def connect(self, callback):
+        self.callback = callback
 
 
-class _FakeResultCard:
-    def __init__(self, actions, **_kwargs):
+class _FakeOptionsGroup:
+    def __init__(self, options, anchor, actions):
+        self.options = options
+        self.anchor = anchor
+        self.choice_made = _FakeSignal()
         self.actions = actions
 
-    def _handle_open(self):
-        self.actions.append("open")
-
-    def _handle_show(self):
-        self.actions.append("show")
-
     def show(self):
-        self.actions.append("find")
+        self.actions.append(("options", self.options))
 
 
 @pytest.mark.parametrize(
-    ("transcript", "expected_action", "expected_query"),
+    ("transcript", "expected_query", "expected_overlay_text", "expected_action"),
     [
-        ("open candidate", "open", "candidate"),
-        ("show candidate", "show", "candidate"),
-        ("find candidate", "find", "candidate"),
+        ("open candidate", "candidate", "Opening candidate.txt", "open"),
+        (
+            "show candidate",
+            "candidate",
+            "Showing candidate.txt in Explorer",
+            "show",
+        ),
+        ("find candidate", "candidate", "find candidate", "find"),
+        (
+            "open ambiguous",
+            "ambiguous",
+            "Not sure which file - pick one",
+            "options",
+        ),
+        ("open missing", "missing", "No match found", "no_match"),
     ],
 )
-def test_alt_voice_flow_uses_main_thread_and_dispatches_spoken_command(
-    monkeypatch, transcript, expected_action, expected_query
+def test_alt_voice_flow_dispatches_through_real_query_handler(
+    monkeypatch,
+    tmp_path,
+    transcript,
+    expected_query,
+    expected_overlay_text,
+    expected_action,
 ):
-    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     qt_app = QApplication.instance() or QApplication([])
     gui_thread = threading.get_ident()
     controller = main.SmartFileFinderApp.__new__(main.SmartFileFinderApp)
-    if isinstance(controller, QObject):
-        QObject.__init__(controller)
+
+    candidate_path = tmp_path / "candidate.txt"
+    other_path = tmp_path / "candidate-notes.txt"
+    candidate_path.write_text("candidate result", encoding="utf-8")
+    other_path.write_text("another candidate", encoding="utf-8")
+
+    retrieval_queries = []
+
+    def stub_index(query):
+        retrieval_queries.append(query)
+        if query == "ambiguous":
+            return [
+                Candidate(str(candidate_path), 0.70, {"chunk_text": "candidate"}),
+                Candidate(str(other_path), 0.68, {"chunk_text": "candidate"}),
+            ]
+        if query == "missing":
+            return [
+                Candidate(str(candidate_path), 0.20, {"chunk_text": "candidate"})
+            ]
+        return [
+            Candidate(str(candidate_path), 0.95, {"chunk_text": "candidate"})
+        ]
+
+    monkeypatch.setattr(query_handler, "retrieve", stub_index)
 
     recorder = _FakeRecorder()
-    overlay = VoiceOverlay(transcript_duration_ms=5000, fade_duration_ms=10)
+    input_bar = InputBar(lambda _text: None)
+    overlay = VoiceOverlay(
+        transcript_duration_ms=5000,
+        fade_duration_ms=10,
+        input_bar=input_bar,
+    )
     transcript_show_threads = []
     show_transcript = overlay.show_transcript
 
@@ -95,7 +131,6 @@ def test_alt_voice_flow_uses_main_thread_and_dispatches_spoken_command(
 
     overlay.show_transcript = tracked_show_transcript
     actions = []
-    queries = []
     controller.voice_enabled = True
     controller._voice_tier = "mid"
     controller._recording = False
@@ -108,7 +143,9 @@ def test_alt_voice_flow_uses_main_thread_and_dispatches_spoken_command(
     controller.voice_overlay = overlay
     controller.voice_recorder = recorder
     controller.voice_transcriber = _FakeTranscriber(transcript)
-    controller.input_bar = _FakeInputBar()
+    controller.input_bar = input_bar
+    controller.result_card = None
+    controller.options_group = None
     controller._load_voice_setting = lambda _key, default: {
         "voice_hold_ms": 30,
         "voice_key": "left alt",
@@ -121,24 +158,36 @@ def test_alt_voice_flow_uses_main_thread_and_dispatches_spoken_command(
     controller.voice_bridge.error.connect(controller._on_voice_error)
     overlay.dismissed.connect(controller._on_voice_overlay_dismissed)
 
-    def fake_handle_query(query):
-        queries.append(query)
-        return {
-            "action": "answer",
-            "found": True,
-            "path": "candidate.txt",
-            "score": 0.9,
-            "explanation": "test match",
-        }
-
-    monkeypatch.setattr(main, "handle_query", fake_handle_query)
     monkeypatch.setattr(
-        main, "ResultCard",
-        lambda **kwargs: _FakeResultCard(actions, **kwargs),
+        main,
+        "OptionsPopupGroup",
+        lambda options, anchor: _FakeOptionsGroup(options, anchor, actions),
+    )
+    monkeypatch.setattr(
+        main.ResultCard,
+        "show",
+        lambda card: actions.append(("find", card.file_path)),
+    )
+    monkeypatch.setattr(
+        result_card.os,
+        "startfile",
+        lambda path: actions.append(("open", str(path))),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        result_card.subprocess,
+        "Popen",
+        lambda args: actions.append(("show", args)),
+    )
+    monkeypatch.setattr(
+        main.QMessageBox,
+        "information",
+        lambda *_args: actions.append(("no_match_message", None)),
     )
     monkeypatch.setattr(main, "missing_voice_model_for_tier", lambda _tier: None)
     monkeypatch.setattr(
-        main, "get_voice_model_for_tier",
+        main,
+        "get_voice_model_for_tier",
         lambda _tier: {"repo_id": "test/local-voice-model"},
     )
     monkeypatch.setattr(
@@ -162,8 +211,6 @@ def test_alt_voice_flow_uses_main_thread_and_dispatches_spoken_command(
         )
 
     def fake_inject_unassigned_key():
-        # keyboard's Windows backend represents VK 0xE8 as scan_code -232
-        # and a missing key name when MapVirtualKey returns no scan code.
         send_key(None, -0xE8, keyboard.KEY_DOWN)
         send_key(None, -0xE8, keyboard.KEY_UP)
 
@@ -201,32 +248,57 @@ def test_alt_voice_flow_uses_main_thread_and_dispatches_spoken_command(
         qt_app.processEvents()
         assert recorder.cancel_calls == 0
         assert recorder.start_thread == gui_thread
-        qt_app.processEvents()
         assert overlay.isVisible()
         assert overlay.label.text() == "Listening..."
 
         release_alt.set()
         event_thread.join(timeout=1)
         deadline = time.monotonic() + 2
-        while (
-            overlay.label.text() != transcript
-            and time.monotonic() < deadline
-        ):
+        while overlay.label.text() != transcript and time.monotonic() < deadline:
             qt_app.processEvents()
             time.sleep(0.005)
 
         assert overlay.isVisible()
         assert overlay.label.text() == transcript
         assert transcript_show_threads == [gui_thread]
-        overlay.fade_out()
-        QTest.qWait(100)
+        overlay._state = "fading"
+        overlay._finish_fade()
 
-        assert queries == [expected_query]
-        assert actions == [expected_action]
+        expected_path = str(candidate_path.resolve())
+        assert retrieval_queries[0] == expected_query
+
+        if expected_action == "open":
+            assert actions == [("open", expected_path)]
+            assert overlay.label.text() == expected_overlay_text
+            assert overlay.isVisible()
+        elif expected_action == "show":
+            assert actions == [
+                ("show", ["explorer.exe", "/select,", expected_path])
+            ]
+            assert overlay.label.text() == expected_overlay_text
+            assert overlay.isVisible()
+        elif expected_action == "find":
+            assert actions == [("find", expected_path)]
+            assert overlay.label.text() == expected_overlay_text
+            assert not overlay.isVisible()
+        elif expected_action == "options":
+            assert actions[0][0] == "options"
+            assert len(actions[0][1]) == 2
+            assert not any(action[0] in {"open", "show"} for action in actions)
+            assert overlay.label.text() == expected_overlay_text
+            assert overlay.isVisible()
+        else:
+            assert ("no_match_message", None) in actions
+            assert not any(action[0] in {"open", "show"} for action in actions)
+            assert overlay.label.text() == expected_overlay_text
+            assert overlay.isVisible()
     finally:
         release_alt.set()
         event_thread.join(timeout=1)
         if controller._hotkey_unregister is not None:
             controller._hotkey_unregister()
+        if controller.result_card is not None:
+            controller.result_card.close()
         overlay.close()
+        input_bar.close()
         qt_app.processEvents()

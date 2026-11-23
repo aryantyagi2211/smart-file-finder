@@ -68,7 +68,7 @@ def test_open_alone_shows_instruction_without_search(monkeypatch):
     instance._hotkey_unregister = None
     instance.voice_overlay = FakeOverlay()
     searched = []
-    instance._execute_parsed_command = searched.append
+    instance._dispatch_command = searched.append
 
     instance._on_voice_overlay_dismissed()
 
@@ -103,7 +103,9 @@ def test_voice_auto_search_false_opens_editable_bar_and_parses_unchanged_text():
     instance._hotkey_unregister = None
     instance.input_bar = FakeInputBar()
     submitted = []
-    instance._execute_parsed_command = submitted.append
+    instance._dispatch_command = (
+        lambda parsed, voice_feedback=False: submitted.append(parsed)
+    )
 
     instance._on_voice_overlay_dismissed()
     assert instance.input_bar.text_input.text == "open the corrective rag"
@@ -114,6 +116,30 @@ def test_voice_auto_search_false_opens_editable_bar_and_parses_unchanged_text():
     assert len(submitted) == 1
     assert submitted[0].command.value == "open"
     assert submitted[0].query == "corrective rag"
+
+
+def test_typed_and_spoken_commands_share_dispatch():
+    from app.main import SmartFileFinderApp
+
+    instance = object.__new__(SmartFileFinderApp)
+    dispatched = []
+    instance._pending_voice_transcript = None
+    instance._dispatch_command = (
+        lambda parsed, voice_feedback=False: dispatched.append(parsed)
+    )
+
+    instance._on_query_submitted("/open corrective rag")
+
+    instance._pending_voice_transcript = " Open corrective rag. "
+    instance._pending_voice_auto_search = True
+    instance._voice_overlay_active = __import__("threading").Event()
+    instance._hotkey_unregister = None
+    instance._on_voice_overlay_dismissed()
+
+    assert len(dispatched) == 2
+    assert dispatched[0] == dispatched[1]
+    assert dispatched[0].command.value == "open"
+    assert dispatched[0].query == "corrective rag"
 
 
 def test_voice_open_options_are_shown_without_automatic_open(monkeypatch):
@@ -148,7 +174,7 @@ def test_voice_open_options_are_shown_without_automatic_open(monkeypatch):
     )
     monkeypatch.setattr(main, "OptionsPopupGroup", FakeOptions)
 
-    instance._execute_parsed_command(parse_voice_command("open candidate"))
+    instance._dispatch_command(parse_voice_command("open candidate"))
 
     assert instance.options_group.shown
     assert instance.result_card is None

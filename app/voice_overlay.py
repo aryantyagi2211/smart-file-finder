@@ -2,7 +2,15 @@
 
 import math
 
-from PyQt6.QtCore import QPropertyAnimation, QRectF, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import (
+    QPropertyAnimation,
+    QPoint,
+    QRectF,
+    QSize,
+    Qt,
+    QTimer,
+    pyqtSignal,
+)
 from PyQt6.QtGui import QColor, QCursor, QPainter, QPen
 from PyQt6.QtWidgets import (
     QApplication,
@@ -11,7 +19,27 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from app.input_bar import BAR_HEIGHT, BAR_WIDTH, input_bar_position
 from observability.logger import log_voice
+
+
+def voice_overlay_position(available_geometry, bar_position, bar_size,
+                           overlay_size):
+    """Align the overlay's center and bottom edge with the input bar."""
+    x = bar_position.x() + (bar_size.width() - overlay_size.width()) // 2
+    y = bar_position.y() + bar_size.height() - overlay_size.height()
+    max_x = max(
+        available_geometry.left(),
+        available_geometry.right() - overlay_size.width() + 1,
+    )
+    max_y = max(
+        available_geometry.top(),
+        available_geometry.bottom() - overlay_size.height() + 1,
+    )
+    return QPoint(
+        max(available_geometry.left(), min(x, max_x)),
+        max(available_geometry.top(), min(y, max_y)),
+    )
 
 
 class _MicrophoneIcon(QWidget):
@@ -67,10 +95,18 @@ class VoiceOverlay(QWidget):
 
     dismissed = pyqtSignal()
 
-    def __init__(self, transcript_duration_ms=800, fade_duration_ms=180):
+    def __init__(
+        self,
+        transcript_duration_ms=800,
+        fade_duration_ms=180,
+        safety_timeout_ms=10000,
+        input_bar=None,
+    ):
         super().__init__()
         self.transcript_duration_ms = transcript_duration_ms
         self.fade_duration_ms = fade_duration_ms
+        self.safety_timeout_ms = safety_timeout_ms
+        self.input_bar = input_bar
         self._state = "idle"
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -87,11 +123,7 @@ class VoiceOverlay(QWidget):
         self.label = QLabel("", self)
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label.setWordWrap(True)
-        self.label.setStyleSheet(
-            "QLabel { color: rgba(247, 249, 255, 224); "
-            "background: transparent; font-family: Segoe UI; "
-            "font-size: 13px; font-weight: 500; }"
-        )
+        self._set_label_style(feedback=False)
         shadow = QGraphicsDropShadowEffect(self.label)
         shadow.setBlurRadius(5)
         shadow.setOffset(0, 1)
@@ -110,6 +142,9 @@ class VoiceOverlay(QWidget):
         self._message_timer = QTimer(self)
         self._message_timer.setSingleShot(True)
         self._message_timer.timeout.connect(self.fade_out)
+        self._safety_timer = QTimer(self)
+        self._safety_timer.setSingleShot(True)
+        self._safety_timer.timeout.connect(self._safety_timeout)
         self._fade_animation = QPropertyAnimation(self, b"windowOpacity", self)
         self._fade_animation.finished.connect(self._finish_fade)
         self._log_overlay("created")
@@ -120,17 +155,20 @@ class VoiceOverlay(QWidget):
 
     def show_listening(self):
         self._state = "listening"
+        self._set_label_style(feedback=False)
         self.label.setText("Listening...")
         self.icon.listening = True
         self._pulse_timer.start()
         self._show_at_cursor_screen()
         self._fade_in()
+        self._start_safety_timer()
 
     def show_transcribing(self):
         self._state = "transcribing"
         self._message_timer.stop()
         self._pulse_timer.stop()
         self._fade_animation.stop()
+        self._set_label_style(feedback=False)
         self.icon.listening = False
         self.label.setText("Transcribing...")
         self._show_at_cursor_screen()
@@ -138,11 +176,13 @@ class VoiceOverlay(QWidget):
         self.show()
         self.raise_()
         self._log_overlay("show")
+        self._start_safety_timer()
 
     def show_transcript(self, text):
         self._state = "transcript"
         self._pulse_timer.stop()
         self._fade_animation.stop()
+        self._set_label_style(feedback=False)
         self.icon.listening = False
         self.label.setText(text)
         self._show_at_cursor_screen()
@@ -151,11 +191,13 @@ class VoiceOverlay(QWidget):
         self.raise_()
         self._log_overlay("show")
         self._message_timer.start(self.transcript_duration_ms)
+        self._start_safety_timer()
 
     def show_message(self, text, duration_ms=1800):
         self._state = "message"
         self._pulse_timer.stop()
         self._fade_animation.stop()
+        self._set_label_style(feedback=False)
         self.icon.listening = False
         self.label.setText(text)
         self._show_at_cursor_screen()
@@ -164,6 +206,46 @@ class VoiceOverlay(QWidget):
         self.raise_()
         self._log_overlay("show")
         self._message_timer.start(duration_ms)
+        self._start_safety_timer()
+
+    def show_feedback(self, text, duration_ms=1000):
+        self._state = "feedback"
+        self._pulse_timer.stop()
+        self._fade_animation.stop()
+        self._set_label_style(feedback=True)
+        self.icon.listening = False
+        self.label.setText(text)
+        self._show_at_cursor_screen()
+        self.setWindowOpacity(1.0)
+        self.show()
+        self.raise_()
+        self._log_overlay("show")
+        self._message_timer.start(duration_ms)
+        self._start_safety_timer()
+
+    def _set_label_style(self, feedback):
+        font_size = 11 if feedback else 13
+        opacity = 175 if feedback else 224
+        self.label.setStyleSheet(
+            "QLabel { color: rgba(247, 249, 255, "
+            f"{opacity}); background: transparent; font-family: Segoe UI; "
+            f"font-size: {font_size}px; font-weight: 500; }}"
+        )
+
+    def _start_safety_timer(self):
+        self._safety_timer.start(self.safety_timeout_ms)
+
+    def _safety_timeout(self):
+        if not self.isVisible():
+            return
+        log_voice(f"overlay safety timeout fired state={self._state}")
+        self._message_timer.stop()
+        self._pulse_timer.stop()
+        self._fade_animation.stop()
+        self._safety_timer.stop()
+        self.hide()
+        self._state = "idle"
+        self.dismissed.emit()
 
     def fade_out(self):
         if not self.isVisible():
@@ -193,6 +275,7 @@ class VoiceOverlay(QWidget):
     def _finish_fade(self):
         if self._state != "fading":
             return
+        self._safety_timer.stop()
         self.hide()
         self._state = "idle"
         self.dismissed.emit()
@@ -233,6 +316,17 @@ class VoiceOverlay(QWidget):
         if screen is None:
             return
         geometry = screen.availableGeometry()
-        x = geometry.x() + (geometry.width() - self.width()) // 2
-        y = geometry.y() + int(geometry.height() * 0.39) - self.height() // 2
-        self.move(x, y)
+        if self.input_bar is None:
+            bar_size = QSize(BAR_WIDTH, BAR_HEIGHT)
+            bar_position = input_bar_position(
+                geometry, bar_size, clamp=True
+            )
+        else:
+            bar_size = self.input_bar.size()
+            bar_position = self.input_bar.position_for_screen(
+                screen, clamp=True
+            )
+        overlay_position = voice_overlay_position(
+            geometry, bar_position, bar_size, self.size()
+        )
+        self.move(overlay_position)

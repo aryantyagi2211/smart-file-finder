@@ -18,6 +18,8 @@ def test_find_command():
     ("text", "command", "query"),
     [
         ("Open.", Command.OPEN, ""),
+        (" Open corrective rag. ", Command.OPEN, "corrective rag"),
+        ("\tSHOW, me the corrective rag.\t", Command.SHOW, "corrective rag"),
         ("open the corrective rag", Command.OPEN, "corrective rag"),
         ("Show me the roadmap", Command.SHOW, "roadmap"),
         ("find roadmap", Command.FIND, "roadmap"),

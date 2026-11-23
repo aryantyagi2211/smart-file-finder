@@ -10,6 +10,7 @@ score as a percentage.
 
 import os
 from pathlib import Path
+import subprocess
 
 import qtawesome as qta
 from PyQt6.QtWidgets import (
@@ -130,6 +131,16 @@ def _elide_filename(name, font, width):
         elif left:
             left = left[:-1]
     return f"…{suffix}"
+
+
+def open_file(file_path):
+    """Open a file using its absolute path."""
+    os.startfile(str(Path(file_path).resolve()))
+
+
+def reveal_in_explorer(file_path):
+    """Open Explorer with the specified file selected."""
+    subprocess.Popen(["explorer.exe", "/select,", str(Path(file_path).resolve())])
 
 
 class ResultCard(QWidget):
@@ -287,15 +298,17 @@ class ResultCard(QWidget):
 
     def _handle_open(self):
         try:
-            os.startfile(str(Path(self.file_path).resolve()))
+            open_file(self.file_path)
         except Exception as error:
             QMessageBox.warning(self, "Error", f"Could not open file: {error}")
 
     def _handle_show(self):
         try:
-            os.startfile(Path(self.file_path).resolve().parent)
+            reveal_in_explorer(self.file_path)
         except Exception as error:
-            QMessageBox.warning(self, "Error", f"Could not open folder: {error}")
+            QMessageBox.warning(
+                self, "Error", f"Could not show file in Explorer: {error}"
+            )
 
     def paintEvent(self, event):
         _paint_card_background(self, "#168aff")

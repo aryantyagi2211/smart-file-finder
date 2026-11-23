@@ -41,14 +41,14 @@ from app.voice_recorder import VoiceRecorder, VoiceRecorderError
 from app.voice_transcriber import VoiceTranscriber
 from app.voice_overlay import VoiceOverlay
 from app.input_bar import InputBar
-from app.command_parser import (
-    parse_command,
-    parse_voice_command,
-    Command,
-    should_auto_open,
-)
+from app.command_parser import parse_command, parse_voice_command, Command
 from app.query_handler import handle_query
-from app.result_card import OptionsPopupGroup, ResultCard
+from app.result_card import (
+    OptionsPopupGroup,
+    ResultCard,
+    open_file,
+    reveal_in_explorer,
+)
 from indexing.backfill_index import (
     EXCLUDED_FOLDER_NAMES,
     SUPPORTED_EXTENSIONS,
@@ -182,7 +182,7 @@ class SmartFileFinderApp:
         )
         self.result_card = None
         self.options_group = None
-        self.voice_overlay = VoiceOverlay()
+        self.voice_overlay = VoiceOverlay(input_bar=self.input_bar)
         self.voice_overlay.dismissed.connect(
             self._on_voice_overlay_dismissed
         )
@@ -751,7 +751,7 @@ class SmartFileFinderApp:
         if finish_session is not None:
             finish_session()
         log_voice(f"action=dispatch_{parsed.command.value}")
-        self._execute_parsed_command(parsed)
+        self._dispatch_command(parsed, voice_feedback=True)
 
     def _show_input_bar(self):
         self.hotkey_bridge.triggered.emit()
@@ -770,7 +770,7 @@ class SmartFileFinderApp:
                 f"parsed command={parsed.command.value} query={parsed.query!r} "
                 "source=editable_voice_transcript"
             )
-            self._execute_parsed_command(parsed)
+            self._dispatch_command(parsed, voice_feedback=True)
             return
         self._pending_voice_transcript = None
         try:
@@ -779,9 +779,9 @@ class SmartFileFinderApp:
             QMessageBox.warning(self.input_bar, "Invalid command", str(e))
             return
 
-        self._execute_parsed_command(parsed)
+        self._dispatch_command(parsed)
 
-    def _execute_parsed_command(self, parsed):
+    def _dispatch_command(self, parsed, voice_feedback=False):
         if not parsed.query:
             return
 
@@ -794,10 +794,14 @@ class SmartFileFinderApp:
             )
             self.options_group.choice_made.connect(self._on_option_chosen)
             self.options_group.show()
+            if voice_feedback:
+                self._show_voice_feedback("Not sure which file - pick one")
             return
 
-        if not result["found"]:
+        if result.get("action") != "answer" or not result.get("found"):
             log_voice("action result=no_match")
+            if voice_feedback:
+                self._show_voice_feedback("No match found")
             QMessageBox.information(
                 self.input_bar,
                 "No match found",
@@ -809,31 +813,41 @@ class SmartFileFinderApp:
             return
 
         self.result_card = ResultCard(
-            file_path=result["path"],
+            file_path=Path(result["path"]).resolve(),
             score=result["score"],
             explanation=result["explanation"],
             anchor=self.input_bar,
         )
 
-        if should_auto_open(parsed.command, result.get("action")):
+        filename = Path(result["path"]).name
+        if parsed.command == Command.OPEN:
             log_voice("action invoked=open")
             self.result_card._handle_open()
+            if voice_feedback:
+                self._show_voice_feedback(f"Opening {filename}")
         elif parsed.command == Command.SHOW:
             log_voice("action invoked=show")
             self.result_card._handle_show()
+            if voice_feedback:
+                self._show_voice_feedback(
+                    f"Showing {filename} in Explorer"
+                )
         else:
             log_voice("action invoked=find")
             self.result_card.show()
 
+    def _show_voice_feedback(self, text):
+        log_voice(f"voice action feedback text={text!r}")
+        self.voice_overlay.show_feedback(text, duration_ms=1000)
+
     def _on_option_chosen(self, action, file_path):
         self.input_bar.hide()
-        target = (
-            Path(file_path).resolve()
-            if action == "open"
-            else Path(file_path).resolve().parent
-        )
+        target = Path(file_path).resolve()
         try:
-            os.startfile(str(target))
+            if action == "open":
+                open_file(target)
+            else:
+                reveal_in_explorer(target)
         except Exception as error:
             QMessageBox.warning(
                 self.input_bar,

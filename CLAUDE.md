@@ -12,6 +12,9 @@
 - Typed input keeps slash-command parsing (`/open`, `/show`, `/find`); plain typed text remains a find. Voice transcripts alone use spoken `open`, `show`, `find`, or `search` commands without symbols.
 - `Ctrl+Shift+Space` remains a tap-only typing-bar shortcut. Voice starts by holding the configured `voice_key` alone (default `left alt`) for `voice_hold_ms` (default 500 ms); `right alt` may act as AltGr on some layouts. Modifier combinations and short Alt taps must not start voice.
 - The Alt voice flow uses a click-through, non-focusing floating microphone overlay. It displays the transcript before acting; `voice_auto_search` defaults to `true`, and `false` opens the transcript in the typing bar for editing.
+- Typed slash commands and spoken commands share `_dispatch_command`. A confident `open` opens the absolute file path; a confident `show` selects the file in Explorer; `find` keeps the standard result card. OPTIONS shows cards without opening or revealing a file, and NO_MATCH keeps the normal no-match message.
+- Spoken command parsing ignores surrounding whitespace and case, strips punctuation around the command word and at the end of a transcript, and removes leading filler words. Voice feedback uses “Opening <file name>”, “Showing <file name> in Explorer”, “Not sure which file - pick one”, and “No match found”. Every overlay state is protected by a logged 10-second safety hide.
+- The voice overlay uses the input bar's shared position calculation: centered over the bar, with its bottom aligned to the bar's bottom, on the cursor's screen and within that screen's taskbar-excluded available area. A remembered dragged bar position is reused and clamped for the overlay; the typing bar's own behavior is unchanged.
 
 ## Models and search thresholds
 
