@@ -294,6 +294,57 @@ def test_cancel_gesture_discards_audio_and_fades_overlay():
     assert instance.voice_overlay.faded
 
 
+def test_early_preroll_release_discards_audio_without_feedback():
+    from app.main import SmartFileFinderApp
+
+    class FakeRecorder:
+        def __init__(self):
+            self.started = 0
+            self.cancelled = 0
+
+        def start(self):
+            self.started += 1
+
+        def cancel(self):
+            self.cancelled += 1
+
+    instance = object.__new__(SmartFileFinderApp)
+    instance.voice_enabled = True
+    instance._recording = False
+    instance._voice_setup_window = None
+    instance._voice_tier = "mid"
+    instance._voice_preroll_active = False
+    instance.voice_recorder = FakeRecorder()
+    instance._load_voice_setting = lambda _key, default: default
+
+    instance._on_voice_state("pre_roll_start")
+    instance._on_voice_state("pre_roll_cancel")
+
+    assert instance.voice_recorder.started == 1
+    assert instance.voice_recorder.cancelled == 1
+    assert not instance._voice_preroll_active
+
+
+def test_hold_release_keeps_configured_tail_delay():
+    from app.main import SmartFileFinderApp
+
+    class FakeTimer:
+        def __init__(self):
+            self.delay = None
+
+        def start(self, delay):
+            self.delay = delay
+
+    instance = object.__new__(SmartFileFinderApp)
+    instance._recording = True
+    instance._voice_tail_timer = FakeTimer()
+    instance._load_voice_setting = lambda _key, default: 300
+
+    instance._on_voice_state("hold_end")
+
+    assert instance._voice_tail_timer.delay == 300
+
+
 def test_ctrl_shift_space_tap_still_emits_typing_bar_signal():
     from app.main import SmartFileFinderApp
     from app.voice_hotkey import VoiceGesture

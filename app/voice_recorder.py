@@ -75,19 +75,33 @@ class VoiceRecorder:
         try:
             self._stream.start()
         except Exception as error:
+            stream = self._stream
+            self._stream = None
+            self._closed = True
+            with self._lock:
+                self._buffer = []
+                self._frame_count = 0
+            try:
+                stream.close()
+            except Exception:
+                log_voice_exception(
+                    "could not close microphone after start failure"
+                )
             raise VoiceRecorderError(
                 f"Could not start the microphone: {error}"
             ) from error
 
     def stop(self):
-        if self._stream is not None:
+        stream = self._stream
+        if stream is not None:
             try:
-                self._stream.stop()
+                stream.stop()
             finally:
                 try:
-                    self._stream.close()
+                    stream.close()
                 except Exception:
                     log_voice_exception("microphone stream close failed")
+                self._stream = None
         with self._lock:
             self._closed = True
             if not self._buffer:
@@ -124,13 +138,15 @@ class VoiceRecorder:
         with self._lock:
             self._cancelled = True
             self._buffer = []
-        if self._stream is not None:
+        stream = self._stream
+        self._stream = None
+        if stream is not None:
             try:
-                self._stream.stop()
+                stream.stop()
             except Exception:
                 log_voice_exception("cancel could not stop microphone stream")
             try:
-                self._stream.close()
+                stream.close()
             except Exception:
                 log_voice_exception("cancel could not close microphone stream")
         self._closed = True

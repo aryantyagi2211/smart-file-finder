@@ -1,13 +1,20 @@
 """Lazy faster-whisper transcription with local CUDA-to-CPU fallback."""
 
 import gc
+import inspect
 import threading
 import time
+
+import numpy as np
 
 from observability.logger import log_voice, log_voice_exception
 
 
 VOICE_SLOW_SECONDS_PER_AUDIO_SECOND = 1.6
+DEFAULT_VOICE_INITIAL_PROMPT = (
+    "Open, show, find. open corrective rag. show the roadmap."
+)
+DEFAULT_VOICE_HOTWORDS = "open show find"
 
 
 def should_offer_lighter_voice_model(
@@ -46,6 +53,8 @@ class VoiceTranscriber:
         model_status_callback=None,
         model_name="Whisper",
         prefer_cuda=False,
+        initial_prompt=DEFAULT_VOICE_INITIAL_PROMPT,
+        hotwords=DEFAULT_VOICE_HOTWORDS,
     ):
         self.model_path = model_path
         self.idle_seconds = idle_seconds
@@ -53,6 +62,8 @@ class VoiceTranscriber:
         self.model_status_callback = model_status_callback
         self.model_name = model_name
         self.prefer_cuda = bool(prefer_cuda)
+        self.initial_prompt = str(initial_prompt or "").strip()
+        self.hotwords = str(hotwords or "").strip()
         self._cuda_disabled = False
         self._cuda_verified = False
         self._cuda_fallback_reported = False
@@ -207,14 +218,56 @@ class VoiceTranscriber:
         return model
 
     @staticmethod
-    def _decode(model, audio, **options):
-        segments, _ = model.transcribe(audio, language="en", **options)
+    def normalize_audio(audio):
+        samples = np.asarray(audio, dtype=np.float32).reshape(-1)
+        if samples.size == 0:
+            return samples
+        active = np.flatnonzero(np.abs(samples) > 1e-4)
+        if active.size:
+            samples = samples[active[0]:active[-1] + 1]
+        else:
+            return np.empty(0, dtype=np.float32)
+        peak = float(np.max(np.abs(samples))) if samples.size else 0.0
+        if peak > 0.0:
+            samples = samples * (0.7079457843841379 / peak)
+            np.clip(samples, -0.9999695, 0.9999695, out=samples)
+        return samples.astype(np.float32, copy=False)
+
+    def _decode(self, model, audio, **options):
+        samples = self.normalize_audio(audio)
+        if samples.size == 0:
+            return ""
+        options.setdefault("temperature", 0)
+        options.setdefault("condition_on_previous_text", False)
+        options.setdefault("initial_prompt", self.initial_prompt or None)
+        if self.hotwords:
+            try:
+                parameters = inspect.signature(model.transcribe).parameters
+            except (TypeError, ValueError):
+                parameters = {}
+            supports_kwargs = any(
+                parameter.kind == inspect.Parameter.VAR_KEYWORD
+                for parameter in parameters.values()
+            )
+            if "hotwords" in parameters or supports_kwargs:
+                options.setdefault("hotwords", self.hotwords)
+        segments, _ = model.transcribe(
+            samples,
+            language="en",
+            **options,
+        )
         return " ".join(
             segment.text.strip() for segment in segments
         ).strip()
 
     def transcribe(self, audio):
-        return self._transcribe(audio, beam_size=5, vad_filter=True)
+        return self._transcribe(
+            audio,
+            beam_size=5,
+            vad_filter=False,
+            temperature=0,
+            condition_on_previous_text=False,
+        )
 
     def transcribe_partial(self, audio):
         """Decode a live snapshot quickly; final transcription remains authoritative."""
@@ -222,6 +275,7 @@ class VoiceTranscriber:
             audio,
             beam_size=1,
             vad_filter=False,
+            temperature=0,
             condition_on_previous_text=False,
         )
 

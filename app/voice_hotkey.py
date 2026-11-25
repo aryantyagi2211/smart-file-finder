@@ -5,6 +5,8 @@ from enum import Enum
 
 class VoiceGesture(str, Enum):
     TAP = "TAP"
+    PRE_ROLL_START = "PRE_ROLL_START"
+    PRE_ROLL_CANCEL = "PRE_ROLL_CANCEL"
     HOLD_START = "HOLD_START"
     HOLD_END = "HOLD_END"
     CANCEL = "CANCEL"
@@ -16,13 +18,15 @@ class TapHoldDetector:
 
     def __init__(
         self,
-        hold_threshold_ms=500,
+        hold_threshold_ms=400,
         max_hold_ms=15000,
         clock=None,
         voice_key="left alt",
+        pre_roll_enabled=True,
     ):
         self.hold_threshold_ms = hold_threshold_ms
         self.max_hold_ms = max_hold_ms
+        self.pre_roll_enabled = bool(pre_roll_enabled)
         self._clock = clock or (lambda: __import__("time").monotonic() * 1000)
         self._pressed = set()
         self.voice_key = self._normalize(voice_key)
@@ -32,6 +36,7 @@ class TapHoldDetector:
         self._voice_blocked = False
         self._voice_started = False
         self._voice_started_at = None
+        self._voice_preroll_active = False
         self._voice_ui_active = False
         self.last_decision_reason = None
         self._tap_active = False
@@ -77,6 +82,12 @@ class TapHoldDetector:
             self._voice_started_at = (
                 None if self._voice_blocked else self._clock()
             )
+            self._voice_preroll_active = (
+                self.pre_roll_enabled and not self._voice_blocked
+            )
+            if self._voice_preroll_active:
+                self.last_decision_reason = "voice key down; pre-roll started"
+                return VoiceGesture.PRE_ROLL_START
             return None
 
         if self._voice_down and not self._voice_blocked:
@@ -84,11 +95,18 @@ class TapHoldDetector:
             self._voice_started_at = None
             if self._voice_started:
                 self._voice_started = False
+                self._voice_preroll_active = False
                 self._voice_ui_active = False
                 self.last_decision_reason = (
                     "another key pressed while voice recording"
                 )
                 return VoiceGesture.CANCEL
+            if self._voice_preroll_active:
+                self._voice_preroll_active = False
+                self.last_decision_reason = (
+                    "another key pressed before voice hold threshold"
+                )
+                return VoiceGesture.PRE_ROLL_CANCEL
 
         if self._voice_ui_active:
             self._voice_ui_active = False
@@ -136,10 +154,18 @@ class TapHoldDetector:
             gesture = (
                 VoiceGesture.HOLD_END
                 if self._voice_started and not self._voice_blocked
-                else None
+                else (
+                    VoiceGesture.PRE_ROLL_CANCEL
+                    if self._voice_preroll_active
+                    else None
+                )
             )
             if gesture == VoiceGesture.HOLD_END:
                 self.last_decision_reason = "voice key released after hold"
+            elif gesture == VoiceGesture.PRE_ROLL_CANCEL:
+                self.last_decision_reason = (
+                    "voice key released before hold threshold"
+                )
             self._reset_voice_key()
             return gesture
 
@@ -175,6 +201,7 @@ class TapHoldDetector:
         self._voice_blocked = False
         self._voice_started = False
         self._voice_started_at = None
+        self._voice_preroll_active = False
 
     def _reset_tap(self):
         self._tap_active = False

@@ -89,3 +89,22 @@ def test_recording_never_creates_audio_file(tmp_path, monkeypatch):
     audio = recorder.stop()
     assert audio is not None
     assert list(tmp_path.iterdir()) == []
+
+
+def test_cancel_discards_preroll_and_closes_stream():
+    stream = None
+
+    def factory(callback):
+        nonlocal stream
+        stream = FakeStream(callback, 16000)
+        return stream
+
+    recorder = VoiceRecorder(stream_factory=factory)
+    recorder.start()
+    assert recorder.snapshot() is not None
+
+    recorder.cancel()
+
+    assert stream.stopped
+    assert stream.closed
+    assert recorder.snapshot() is None

@@ -35,13 +35,14 @@ def wait_forever():
     keyboard.wait()
 
 
-def register_tap_hold_hotkey(callback, hold_threshold_ms=500,
+def register_tap_hold_hotkey(callback, hold_threshold_ms=400,
                              max_hold_ms=15000, voice_key="left alt",
-                             cancel_event=None):
+                             cancel_event=None, pre_roll_enabled=True):
     detector = TapHoldDetector(
         hold_threshold_ms=hold_threshold_ms,
         max_hold_ms=max_hold_ms,
         voice_key=voice_key,
+        pre_roll_enabled=pre_roll_enabled,
     )
     stopped = threading.Event()
 

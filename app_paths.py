@@ -339,6 +339,13 @@ def get_models_dir():
     return models_dir
 
 
+def get_voice_lab_dir():
+    """Return private app-data storage for Voice Lab recordings and manifests."""
+    voice_lab_dir = _default_base_dir() / "voice_lab"
+    voice_lab_dir.mkdir(parents=True, exist_ok=True)
+    return voice_lab_dir
+
+
 def _model_cache_path(cache_dir, repo_id, revision):
     repo_folder = "models--" + repo_id.replace("/", "--")
     return Path(cache_dir) / repo_folder / "snapshots" / revision
@@ -546,9 +553,20 @@ def get_config_path(filename):
             "big_vision_model": "gemma-4-E2B-it",
             "voice_enabled": True,
             "voice_key": "left alt",
-            "voice_hold_ms": 500,
+            "voice_hold_ms": 400,
             "voice_max_seconds": 15,
             "voice_auto_search": True,
+            "voice_preroll": True,
+            "voice_tail_ms": 300,
+            "voice_initial_prompt": (
+                "Open, show, find. open corrective rag. show the roadmap."
+            ),
+            "voice_hotwords": "open show find",
+            "voice_command_aliases": {
+                "show": ["show", "sho", "so", "shoe", "shaw"],
+                "open": ["open", "opan"],
+                "find": ["find", "fine", "fined"],
+            },
             "voice_model_override": "",
             "voice_slow_hint_shown": False,
         },

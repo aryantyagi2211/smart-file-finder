@@ -4,3 +4,5 @@ dist_installer/
 build/
 __pycache__/
 .pytest_cache/
+voice_lab/
+eval/voice_report.md

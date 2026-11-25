@@ -116,7 +116,9 @@ content the way you'd naturally describe it.
 - **Hold-to-talk voice search** — hold Left Alt by itself to speak a query.
   Spoken `open`, `show`, `find`, and `search` commands work without a slash;
   a floating, click-through overlay shows listening state and a live,
-  continually updated partial transcript while you speak.
+  continually updated partial transcript while you speak. Pre-roll captures
+  from key-down and keeps audio in memory; short Alt presses may briefly show
+  the Windows microphone indicator.
 - **Live, incremental indexing** — a background watcher picks up new and
   changed files automatically while the app runs; files that haven't
   changed are never re-processed.
@@ -248,12 +250,19 @@ many files you have — subsequent runs only process new or changed files.
   remembers its position). A tap opens the bar; holding it does not start voice.
 - **Hold `Left Alt`** — start voice search. The default `voice_key` is
   `"left alt"`; `"right alt"` is configurable but can act as AltGr on some
-  keyboard layouts. A short Alt tap does nothing.
+  keyboard layouts. A short Alt tap does not start a search, though pre-roll
+  may briefly activate the Windows microphone indicator.
 - Spoken `open`, `show`, `find`, or `search` at the start of a transcript
-  selects that action; spoken `me`, `up`, `the`, `my`, `a`, or `an` immediately
-  after it are ignored. Other speech is a find query.
+  selects that action; voice-only aliases such as “So” for “show” are accepted
+  when followed by a query. Spoken `me`, `up`, `the`, `my`, `a`, or `an`
+  immediately after a command are ignored. Typed text is unchanged.
 - `voice_auto_search` defaults to `true`. Set it to `false` to review and edit
   the transcript in the search bar before pressing Enter.
+- `python -m app.voice_lab` records your 14 test phrases locally;
+  `python -m app.voice_lab --eval` compares models after consent before any
+  missing-model download; `python -m app.voice_lab --live` checks the real
+  Alt-hold pipeline. Voice Lab recordings stay in app data and are never
+  uploaded. Its report contains transcripts and metrics, not audio.
 - Type a plain description, or use an explicit command:
   - `/find <query>` — show the best match with an explanation (also the
     default for plain text)

@@ -25,7 +25,7 @@ if __name__ == "__main__":
         sys.exit(0)
 
 from PyQt6.QtWidgets import QApplication, QMessageBox, QLabel
-from PyQt6.QtCore import QObject, pyqtSignal, Qt
+from PyQt6.QtCore import QObject, pyqtSignal, Qt, QTimer
 
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -39,12 +39,19 @@ from app.hotkey_listener import (
 from app.voice_hotkey import VoiceGesture
 from app.voice_recorder import VoiceRecorder, VoiceRecorderError
 from app.voice_transcriber import (
+    DEFAULT_VOICE_HOTWORDS,
+    DEFAULT_VOICE_INITIAL_PROMPT,
     VoiceTranscriber,
     should_offer_lighter_voice_model,
 )
 from app.voice_overlay import VoiceOverlay
 from app.input_bar import InputBar
-from app.command_parser import parse_command, parse_voice_command, Command
+from app.command_parser import (
+    DEFAULT_VOICE_COMMAND_ALIASES,
+    parse_command,
+    parse_voice_command,
+    Command,
+)
 from app.query_handler import handle_query
 from app.result_card import (
     OptionsPopupGroup,
@@ -270,6 +277,10 @@ class SmartFileFinderApp:
         self.voice_recorder = VoiceRecorder(
             max_seconds=self._load_voice_setting("voice_max_seconds", 15)
         )
+        self._voice_preroll_active = False
+        self._voice_tail_timer = QTimer(self)
+        self._voice_tail_timer.setSingleShot(True)
+        self._voice_tail_timer.timeout.connect(self._finish_voice_recording)
         self.voice_transcriber = None
         self._voice_tier = None
         self._voice_model_override = str(
@@ -760,7 +771,10 @@ class SmartFileFinderApp:
         print(f"Smart File Finder running. Press {DEFAULT_HOTKEY} to search.")
 
     def _register_search_hotkeys(self):
-        hold_ms = int(self._load_voice_setting("voice_hold_ms", 500))
+        hold_ms = int(self._load_voice_setting("voice_hold_ms", 400))
+        pre_roll_enabled = bool(
+            self._load_voice_setting("voice_preroll", True)
+        )
         if self.voice_enabled:
             voice_key = str(
                 self._load_voice_setting("voice_key", "left alt")
@@ -783,6 +797,7 @@ class SmartFileFinderApp:
                 ) * 1000,
                 voice_key=voice_key,
                 cancel_event=self._voice_overlay_active,
+                pre_roll_enabled=pre_roll_enabled,
             )
         else:
             log_voice(
@@ -811,6 +826,10 @@ class SmartFileFinderApp:
         log_voice(f"controller received gesture={gesture.value}")
         if gesture == VoiceGesture.TAP:
             self.hotkey_bridge.triggered.emit()
+        elif gesture == VoiceGesture.PRE_ROLL_START:
+            self.voice_bridge.state.emit("pre_roll_start")
+        elif gesture == VoiceGesture.PRE_ROLL_CANCEL:
+            self.voice_bridge.state.emit("pre_roll_cancel")
         elif gesture == VoiceGesture.HOLD_START:
             self.voice_bridge.state.emit("hold_start")
         elif gesture == VoiceGesture.HOLD_END:
@@ -820,12 +839,69 @@ class SmartFileFinderApp:
 
     def _on_voice_state(self, state):
         log_voice(f"controller state={state}")
-        if state == "hold_start":
+        if state == "pre_roll_start":
+            self._start_voice_preroll()
+        elif state == "pre_roll_cancel":
+            self._cancel_voice_preroll()
+        elif state == "hold_start":
             self._start_voice_recording()
         elif state == "hold_end":
-            self._finish_voice_recording()
+            if self._recording:
+                tail_ms = max(
+                    0, int(self._load_voice_setting("voice_tail_ms", 300))
+                )
+                if tail_ms:
+                    tail_timer = getattr(self, "_voice_tail_timer", None)
+                    if tail_timer is not None:
+                        tail_timer.start(tail_ms)
+                    else:
+                        QTimer.singleShot(
+                            tail_ms, self._finish_voice_recording
+                        )
+                else:
+                    self._finish_voice_recording()
+            else:
+                self._cancel_voice_preroll()
         elif state == "cancel":
             self._cancel_voice_session()
+
+    def _start_voice_preroll(self):
+        if (
+            not self.voice_enabled
+            or self._recording
+            or getattr(self, "_voice_setup_window", None) is not None
+            or getattr(self, "_voice_tier", None) is None
+        ):
+            return
+        if not self._load_voice_setting("voice_preroll", True):
+            return
+        tail_timer = getattr(self, "_voice_tail_timer", None)
+        if tail_timer is not None and tail_timer.isActive():
+            tail_timer.stop()
+        if getattr(self, "_voice_preroll_active", False):
+            return
+        try:
+            started_at = time.perf_counter()
+            self.voice_recorder.start()
+            self._voice_preroll_active = True
+            log_voice(
+                "pre-roll recorder start "
+                f"seconds={time.perf_counter() - started_at:.3f} "
+                "sample_rate=16000"
+            )
+        except Exception as error:
+            self._voice_preroll_active = False
+            log_voice_exception(f"pre-roll recorder start failed: {error}")
+
+    def _cancel_voice_preroll(self):
+        if not getattr(self, "_voice_preroll_active", False):
+            return
+        self._voice_preroll_active = False
+        try:
+            self.voice_recorder.cancel()
+        except Exception:
+            log_voice_exception("could not discard voice pre-roll audio")
+        log_voice("voice pre-roll discarded")
 
     def _start_voice_recording(self):
         if not self.voice_enabled or self._recording:
@@ -835,8 +911,10 @@ class SmartFileFinderApp:
             )
             return
         if self._voice_setup_window is not None:
+            self._cancel_voice_preroll()
             return
         if self._voice_tier is None:
+            self._cancel_voice_preroll()
             self._on_voice_error("Voice search is not available yet")
             return
         model_name = getattr(self, "_voice_model_override", "") or None
@@ -844,6 +922,7 @@ class SmartFileFinderApp:
             self._voice_tier, model_name=model_name
         )
         if model is not None:
+            self._cancel_voice_preroll()
             log_voice(
                 f"voice model missing tier={self._voice_tier}; "
                 "opening model setup"
@@ -876,14 +955,27 @@ class SmartFileFinderApp:
                         and model_entry["name"] == "Whisper large-v3-turbo"
                     ),
                     model_status_callback=self.voice_bridge.model_status.emit,
+                    initial_prompt=self._load_voice_setting(
+                        "voice_initial_prompt",
+                        DEFAULT_VOICE_INITIAL_PROMPT,
+                    ),
+                    hotwords=self._load_voice_setting(
+                        "voice_hotwords", DEFAULT_VOICE_HOTWORDS
+                    ),
                 )
-            recorder_started_at = time.perf_counter()
-            self.voice_recorder.start()
-            log_voice(
-                "recorder start "
-                f"seconds={time.perf_counter() - recorder_started_at:.3f} "
-                f"samples=0 sample_rate={self.voice_recorder.SAMPLE_RATE}"
-            )
+            if getattr(self, "_voice_preroll_active", False):
+                self._voice_preroll_active = False
+                log_voice(
+                    "pre-roll confirmed; retaining audio captured since key-down"
+                )
+            else:
+                recorder_started_at = time.perf_counter()
+                self.voice_recorder.start()
+                log_voice(
+                    "recorder start "
+                    f"seconds={time.perf_counter() - recorder_started_at:.3f} "
+                    f"samples=0 sample_rate={self.voice_recorder.SAMPLE_RATE}"
+                )
             self._recording = True
             self._start_live_transcription()
             self.input_bar.hide()
@@ -916,6 +1008,9 @@ class SmartFileFinderApp:
         if not self._recording:
             log_voice("recorder stop skipped; no active recording")
             return
+        tail_timer = getattr(self, "_voice_tail_timer", None)
+        if tail_timer is not None and tail_timer.isActive():
+            tail_timer.stop()
         self._recording = False
         self._live_transcription_stop.set()
         recorder_stopped_at = time.perf_counter()
@@ -1073,10 +1168,16 @@ class SmartFileFinderApp:
         self._cancel_voice_session()
 
     def _cancel_recording(self):
+        tail_timer = getattr(self, "_voice_tail_timer", None)
+        if tail_timer is not None and tail_timer.isActive():
+            tail_timer.stop()
         stop_event = getattr(self, "_live_transcription_stop", None)
         if stop_event is not None:
             stop_event.set()
-        if not self._recording:
+        was_recording = self._recording
+        was_preroll = getattr(self, "_voice_preroll_active", False)
+        self._voice_preroll_active = False
+        if not was_recording and not was_preroll:
             return
         self._recording = False
         try:
@@ -1118,7 +1219,12 @@ class SmartFileFinderApp:
 
         auto_search = self._pending_voice_auto_search
         self._pending_voice_transcript = None
-        parsed = parse_voice_command(transcript)
+        parsed = parse_voice_command(
+            transcript,
+            aliases=self._load_voice_setting(
+                "voice_command_aliases", DEFAULT_VOICE_COMMAND_ALIASES
+            ),
+        )
         log_voice(
             f"parsed command={parsed.command.value} query={parsed.query!r} "
             f"auto_search={auto_search}"
@@ -1165,7 +1271,12 @@ class SmartFileFinderApp:
             and raw_text == self._pending_voice_transcript
         ):
             self._pending_voice_transcript = None
-            parsed = parse_voice_command(raw_text)
+            parsed = parse_voice_command(
+                raw_text,
+                aliases=self._load_voice_setting(
+                    "voice_command_aliases", DEFAULT_VOICE_COMMAND_ALIASES
+                ),
+            )
             log_voice(
                 f"parsed command={parsed.command.value} query={parsed.query!r} "
                 "source=editable_voice_transcript"

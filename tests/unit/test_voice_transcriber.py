@@ -18,20 +18,24 @@ class FakeWhisper:
         return [FakeSegment(" adaptive rag ")], None
 
 
-def test_transcriber_lazy_load_language_beam_and_vad():
+def test_transcriber_uses_production_decode_options_and_vocabulary():
     fake = FakeWhisper()
     transcriber = VoiceTranscriber(
         model_path="/tmp/model",
         whisper_model=fake,
     )
     assert transcriber._model is fake
-    text = transcriber.transcribe([0.0] * 16000)
+    text = transcriber.transcribe([0.1] * 16000)
 
     assert text == "adaptive rag"
     assert fake.calls == [{
         "language": "en",
         "beam_size": 5,
-        "vad_filter": True,
+        "vad_filter": False,
+        "temperature": 0,
+        "condition_on_previous_text": False,
+        "initial_prompt": "Open, show, find. open corrective rag. show the roadmap.",
+        "hotwords": "open show find",
     }]
 
 
@@ -42,13 +46,61 @@ def test_partial_transcription_uses_fast_non_vad_decode():
         whisper_model=fake,
     )
 
-    assert transcriber.transcribe_partial([0.0] * 16000) == "adaptive rag"
+    assert transcriber.transcribe_partial([0.1] * 16000) == "adaptive rag"
     assert fake.calls == [{
         "language": "en",
         "beam_size": 1,
         "vad_filter": False,
+        "temperature": 0,
         "condition_on_previous_text": False,
+        "initial_prompt": "Open, show, find. open corrective rag. show the roadmap.",
+        "hotwords": "open show find",
     }]
+
+
+def test_all_silence_returns_empty_without_calling_model():
+    fake = FakeWhisper()
+    transcriber = VoiceTranscriber(whisper_model=fake)
+
+    assert transcriber.transcribe([0.0] * 16000) == ""
+    assert fake.calls == []
+
+
+def test_transcriber_normalizes_audio_and_skips_unsupported_hotwords():
+    class NoHotwordsWhisper:
+        def __init__(self):
+            self.audio = None
+            self.kwargs = None
+
+        def transcribe(
+            self,
+            audio,
+            language=None,
+            beam_size=5,
+            vad_filter=False,
+            temperature=0,
+            condition_on_previous_text=False,
+            initial_prompt=None,
+        ):
+            self.audio = audio
+            self.kwargs = {
+                "language": language,
+                "beam_size": beam_size,
+                "vad_filter": vad_filter,
+                "temperature": temperature,
+                "condition_on_previous_text": condition_on_previous_text,
+                "initial_prompt": initial_prompt,
+            }
+            return [FakeSegment(" normalized ")], None
+
+    fake = NoHotwordsWhisper()
+    transcriber = VoiceTranscriber(whisper_model=fake)
+    audio = [0.0, 0.1, 0.2, 0.1, 0.0]
+
+    assert transcriber.transcribe(audio) == "normalized"
+    assert len(fake.audio) == 3
+    assert abs(float(max(fake.audio)) - 0.7079458) < 1e-5
+    assert "hotwords" not in fake.kwargs
 
 
 def test_idle_unload():
@@ -131,7 +183,7 @@ def test_mid_high_cuda_model_uses_int8_float16_and_warms_up(
         prefer_cuda=True,
     )
 
-    assert transcriber.transcribe([0.0]) == "adaptive rag"
+    assert transcriber.transcribe([0.1]) == "adaptive rag"
     assert transcriber.active_device == "cuda"
     assert constructors == [(
         str(tmp_path),
@@ -168,7 +220,7 @@ def test_cuda_warmup_failure_falls_back_to_cpu_same_local_model(
         model_status_callback=statuses.append,
     )
 
-    assert transcriber.transcribe([0.0]) == "adaptive rag"
+    assert transcriber.transcribe([0.1]) == "adaptive rag"
     assert transcriber.active_device == "cpu"
     assert [entry[0] for entry in constructors] == [
         str(tmp_path),
@@ -209,7 +261,7 @@ def test_cuda_decode_out_of_memory_retries_clip_once_on_cpu(
         prefer_cuda=True,
     )
 
-    assert transcriber.transcribe([0.0]) == "adaptive rag"
+    assert transcriber.transcribe([0.1]) == "adaptive rag"
     assert transcriber.active_device == "cpu"
     assert [entry[1]["device"] for entry in constructors] == [
         "cuda",
@@ -237,7 +289,7 @@ def test_no_cuda_device_uses_cpu_without_attempting_download(
         prefer_cuda=True,
     )
 
-    assert transcriber.transcribe([0.0]) == "adaptive rag"
+    assert transcriber.transcribe([0.1]) == "adaptive rag"
     assert transcriber.active_device == "cpu"
     assert len(constructors) == 1
     assert constructors[0][1]["device"] == "cpu"

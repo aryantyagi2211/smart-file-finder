@@ -2,18 +2,21 @@ import time
 from types import SimpleNamespace
 
 import keyboard
+import numpy as np
 import pytest
 
 from app import hotkey_listener
 from app.voice_hotkey import TapHoldDetector, VoiceGesture
+from app.voice_recorder import VoiceRecorder
 
 
-def _detector(voice_key="left alt", threshold=500):
+def _detector(voice_key="left alt", threshold=500, pre_roll_enabled=False):
     now = [0.0]
     return TapHoldDetector(
         hold_threshold_ms=threshold,
         clock=lambda: now[0],
         voice_key=voice_key,
+        pre_roll_enabled=pre_roll_enabled,
     ), now
 
 
@@ -25,6 +28,74 @@ def test_alt_hold_starts_at_threshold_and_ends_on_release():
     now[0] = 500
     assert detector.poll() == VoiceGesture.HOLD_START
     assert detector.key_up("left alt") == VoiceGesture.HOLD_END
+
+
+def test_preroll_starts_on_keydown_and_is_kept_for_a_confirmed_hold():
+    detector, now = _detector(threshold=400, pre_roll_enabled=True)
+    assert detector.key_down("left alt") == VoiceGesture.PRE_ROLL_START
+    now[0] = 400
+    assert detector.poll() == VoiceGesture.HOLD_START
+    assert detector.key_up("left alt") == VoiceGesture.HOLD_END
+
+
+def test_preroll_is_discarded_on_early_release_or_shortcut():
+    detector, now = _detector(pre_roll_enabled=True)
+    assert detector.key_down("left alt") == VoiceGesture.PRE_ROLL_START
+    now[0] = 250
+    assert detector.key_up("left alt") == VoiceGesture.PRE_ROLL_CANCEL
+
+    detector, _ = _detector(pre_roll_enabled=True)
+    assert detector.key_down("left alt") == VoiceGesture.PRE_ROLL_START
+    assert detector.key_down("tab") == VoiceGesture.PRE_ROLL_CANCEL
+    assert detector.key_up("left alt") is None
+
+
+def test_recording_started_at_keydown_retains_samples_after_hold_confirmation():
+    class Stream:
+        def __init__(self, callback):
+            self.callback = callback
+            self.closed = False
+
+        def start(self):
+            self.emit(0.25, 6400)
+
+        def emit(self, value, frames):
+            samples = np.full((frames, 1), value, dtype=np.float32)
+            self.callback(samples, frames, None, None)
+
+        def stop(self):
+            pass
+
+        def close(self):
+            self.closed = True
+
+    streams = []
+
+    def factory(callback):
+        stream = Stream(callback)
+        streams.append(stream)
+        return stream
+
+    recorder = VoiceRecorder(stream_factory=factory)
+    detector, now = _detector(threshold=400, pre_roll_enabled=True)
+    assert detector.key_down("left alt") == VoiceGesture.PRE_ROLL_START
+    recorder.start()
+    now[0] = 400
+    assert detector.poll() == VoiceGesture.HOLD_START
+    streams[0].emit(0.5, 3200)
+    assert detector.key_up("left alt") == VoiceGesture.HOLD_END
+
+    audio = recorder.stop()
+
+    assert len(audio) == 9600
+    assert np.allclose(audio[:6400], 0.25)
+    assert np.allclose(audio[6400:], 0.5)
+
+
+def test_preroll_can_be_disabled_for_short_alt_tap_compatibility():
+    detector, _ = _detector(pre_roll_enabled=False)
+    assert detector.key_down("left alt") is None
+    assert detector.key_up("left alt") is None
 
 
 def test_short_alt_tap_does_nothing():
@@ -163,7 +234,10 @@ def test_menu_key_injection_only_happens_on_voice_hold(monkeypatch):
             name="left alt", scan_code=56,
             event_type=keyboard.KEY_UP, is_repeat=False,
         ))
-        assert callbacks == []
+        assert callbacks == [
+            VoiceGesture.PRE_ROLL_START,
+            VoiceGesture.PRE_ROLL_CANCEL,
+        ]
         assert injected == []
 
         event_handler(SimpleNamespace(
@@ -175,7 +249,10 @@ def test_menu_key_injection_only_happens_on_voice_hold(monkeypatch):
             event_type=keyboard.KEY_DOWN, is_repeat=False,
         ))
         time.sleep(0.25)
-        assert callbacks == []
+        assert callbacks[-2:] == [
+            VoiceGesture.PRE_ROLL_START,
+            VoiceGesture.PRE_ROLL_CANCEL,
+        ]
         assert injected == []
         event_handler(SimpleNamespace(
             name="left alt", scan_code=56,
@@ -191,7 +268,10 @@ def test_menu_key_injection_only_happens_on_voice_hold(monkeypatch):
             event_type=keyboard.KEY_DOWN, is_repeat=False,
         ))
         time.sleep(0.25)
-        assert callbacks == [VoiceGesture.HOLD_START]
+        assert callbacks[-2:] == [
+            VoiceGesture.PRE_ROLL_START,
+            VoiceGesture.HOLD_START,
+        ]
         assert injected == [True]
         event_handler(SimpleNamespace(
             name="left alt", scan_code=56,

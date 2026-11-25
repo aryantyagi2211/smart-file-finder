@@ -11,6 +11,7 @@ Plain text with no leading slash-command is treated as /find.
 from dataclasses import dataclass
 from enum import Enum
 import string
+import re
 
 
 class Command(Enum):
@@ -29,6 +30,12 @@ VALID_COMMANDS = {
     "/open": Command.OPEN,
     "/show": Command.SHOW,
     "/find": Command.FIND,
+}
+
+DEFAULT_VOICE_COMMAND_ALIASES = {
+    "show": ["show", "sho", "so", "shoe", "shaw"],
+    "open": ["open", "opan"],
+    "find": ["find", "fine", "fined"],
 }
 
 
@@ -60,7 +67,55 @@ def parse_command(raw_input):
     return ParsedCommand(command=Command.FIND, query=raw_input)
 
 
-def parse_voice_command(text):
+def _edit_distance_at_most_one(word, command_word):
+    if abs(len(word) - len(command_word)) > 1:
+        return False
+    if word == command_word:
+        return True
+
+    left = right = edits = 0
+    while left < len(word) and right < len(command_word):
+        if word[left] == command_word[right]:
+            left += 1
+            right += 1
+            continue
+        edits += 1
+        if edits > 1:
+            return False
+        if len(word) > len(command_word):
+            left += 1
+        elif len(word) < len(command_word):
+            right += 1
+        else:
+            left += 1
+            right += 1
+    if left < len(word) or right < len(command_word):
+        edits += 1
+    return edits <= 1
+
+
+def _voice_alias_command(first_word, aliases):
+    for command_word, command in (
+        ("open", Command.OPEN),
+        ("show", Command.SHOW),
+        ("find", Command.FIND),
+    ):
+        configured = aliases.get(command_word, [])
+        if isinstance(configured, str):
+            configured = [configured]
+        normalized_aliases = {
+            str(alias).strip().casefold()
+            for alias in configured
+            if str(alias).strip()
+        }
+        if first_word in normalized_aliases or _edit_distance_at_most_one(
+            first_word, command_word
+        ):
+            return command
+    return None
+
+
+def parse_voice_command(text, aliases=None):
     """Parse spoken commands without changing typed-input command rules."""
     raw_text = str(text or "").strip().lower()
     if not raw_text:
@@ -69,12 +124,19 @@ def parse_voice_command(text):
     parts = raw_text.split(maxsplit=1)
     first_word = parts[0]
     spoken_command = first_word.strip(string.punctuation)
-    command = {
+    exact_commands = {
         "open": Command.OPEN,
         "show": Command.SHOW,
         "find": Command.FIND,
         "search": Command.FIND,
-    }.get(spoken_command)
+    }
+    command = exact_commands.get(spoken_command)
+    has_following_text = len(parts) > 1 and bool(parts[1].strip())
+    if command is None and has_following_text:
+        command = _voice_alias_command(
+            spoken_command,
+            aliases or DEFAULT_VOICE_COMMAND_ALIASES,
+        )
     if command is None:
         return ParsedCommand(command=Command.FIND, query=raw_text)
 

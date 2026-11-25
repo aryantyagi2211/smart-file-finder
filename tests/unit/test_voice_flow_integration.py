@@ -21,10 +21,12 @@ class _FakeRecorder:
     def __init__(self):
         self.started = threading.Event()
         self.start_thread = None
+        self.start_count = 0
         self.cancel_calls = 0
 
     def start(self):
         self.start_thread = threading.get_ident()
+        self.start_count += 1
         self.started.set()
 
     def stop(self):
@@ -266,6 +268,7 @@ def test_alt_voice_flow_dispatches_through_real_query_handler(
             time.sleep(0.005)
         assert repeated_alt_sent.is_set()
         qt_app.processEvents()
+        assert recorder.start_count == 1
         assert recorder.cancel_calls == 0
         assert recorder.start_thread == gui_thread
         assert overlay.isVisible()

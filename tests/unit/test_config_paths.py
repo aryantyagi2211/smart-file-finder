@@ -53,9 +53,20 @@ def test_missing_settings_file_is_created_with_empty_folder_defaults(
         "big_vision_model": "gemma-4-E2B-it",
         "voice_enabled": True,
         "voice_key": "left alt",
-        "voice_hold_ms": 500,
+        "voice_hold_ms": 400,
         "voice_max_seconds": 15,
         "voice_auto_search": True,
+        "voice_preroll": True,
+        "voice_tail_ms": 300,
+        "voice_initial_prompt": (
+            "Open, show, find. open corrective rag. show the roadmap."
+        ),
+        "voice_hotwords": "open show find",
+        "voice_command_aliases": {
+            "show": ["show", "sho", "so", "shoe", "shaw"],
+            "open": ["open", "opan"],
+            "find": ["find", "fine", "fined"],
+        },
         "voice_model_override": "",
         "voice_slow_hint_shown": False,
     }
