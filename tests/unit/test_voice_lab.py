@@ -122,6 +122,23 @@ def test_download_consent_supports_decline_and_cancel():
         raise AssertionError("cancel must stop evaluation")
 
 
+def test_voice_lab_model_download_is_marked_as_candidate(monkeypatch):
+    from indexing import model_downloader
+
+    calls = []
+    monkeypatch.setattr(
+        model_downloader,
+        "download_model",
+        lambda model, download_source: calls.append(
+            (model, download_source)
+        ) or "snapshot",
+    )
+    candidate = {"repo_id": "test/voice-candidate"}
+
+    assert voice_lab._download_voice_lab_model(candidate) == "snapshot"
+    assert calls == [(candidate, "voice_lab")]
+
+
 def test_fake_model_evaluation_reports_transcript_metrics_and_no_audio(
     tmp_path,
 ):

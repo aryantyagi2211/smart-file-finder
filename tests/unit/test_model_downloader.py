@@ -192,10 +192,18 @@ def test_failed_download_can_be_retried_and_progress_is_monotonic(
     result = model_downloader.download_model(
         model,
         progress_cb=lambda done, total, speed: updates.append((done, total, speed)),
+        download_source="vision_comparison",
     )
 
     assert len(attempts) == 2
     assert result == app_paths.find_model(model["repo_id"])
+    marker = json.loads(
+        (result / ".smart-file-finder-complete.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert marker["download_source"] == "vision_comparison"
+    assert marker["files"] == model["files"]
     assert [done for done, _, _ in updates] == sorted(
         done for done, _, _ in updates
     )

@@ -97,6 +97,23 @@ def test_missing_harness_limits_file_is_created_with_defaults(
     assert any("harness_limits.json" in message for message in messages)
 
 
+def test_missing_model_registry_includes_editable_superseded_entries(
+    tmp_path, monkeypatch
+):
+    project_root = tmp_path / "source"
+    _set_config_root(monkeypatch, project_root)
+
+    registry_path = app_paths.get_config_path("model_tiers.json")
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+
+    assert {
+        model["repo_id"] for model in registry["superseded"]
+    } == {
+        "Systran/faster-whisper-tiny.en",
+        "Systran/faster-whisper-base.en",
+    }
+
+
 def test_config_files_are_found_from_a_different_working_directory(
     tmp_path, monkeypatch
 ):

@@ -40,7 +40,11 @@ def _ensure_model(model):
         return
     set_huggingface_offline(False)
     print(f"Downloading comparison model: {model['repo_id']}", flush=True)
-    download_model(model, progress_cb=_progress_printer(model["name"]))
+    download_model(
+        model,
+        progress_cb=_progress_printer(model["name"]),
+        download_source="vision_comparison",
+    )
 
 
 def _worker(args):

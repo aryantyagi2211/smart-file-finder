@@ -72,3 +72,9 @@ Status: **Implemented; real-device checks remain** — holding the configured Al
 - Voice-only parsing accepts the configured first-word aliases and edit-distance-one command variants when followed by a query (for example, “So corrective rag” means `show`). Recognized transcript text remains unchanged in the overlay. Typed text and slash-command parsing are unaffected.
 - `python -m app.voice_lab` records 14 user-spoken phrases to the local app-data `voice_lab` folder. `python -m app.voice_lab --eval` compares public faster-whisper candidates and an experimental Transformers/PyTorch GPU candidate; it verifies Hugging Face metadata and asks before each missing-model download. `python -m app.voice_lab --live` exercises the real Alt-hold pipeline.
 - Voice Lab audio is never uploaded and stays in app data; generated reports contain transcripts and metrics only, not audio. `voice_lab/` and `eval/voice_report.md` are ignored so private recordings and reports are not committed.
+
+## Model cleanup
+
+- `python -m app.model_cleanup` inventories app-local and Hugging Face cached model folders as a dry run. It reports repo id, disk size, path, and IN USE / CANDIDATE / SUPERSEDED / EXTERNAL status.
+- `--apply` asks default-no confirmation per complete cache folder. IN USE models are never deletable; EXTERNAL shared-cache models warn that other projects may use them. Gemma 4 E2B stays protected.
+- `python -m app.model_cleanup --voice-lab-recordings` reports the local Voice Lab recordings folder; removal requires `--apply` and explicit confirmation. Only dry-run inventories were performed during implementation; no model or recording folders were deleted.

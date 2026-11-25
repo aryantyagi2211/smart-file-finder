@@ -263,6 +263,12 @@ many files you have — subsequent runs only process new or changed files.
   missing-model download; `python -m app.voice_lab --live` checks the real
   Alt-hold pipeline. Voice Lab recordings stay in app data and are never
   uploaded. Its report contains transcripts and metrics, not audio.
+- `python -m app.model_cleanup` lists downloaded app and Hugging Face models
+  without deleting anything. Use `--apply` to confirm each eligible model
+  individually; models in use are protected, and shared-cache entries warn
+  that other projects may depend on them. Add `--voice-lab-recordings` to
+  inspect the local recordings folder; `--apply` and confirmation are
+  required to remove it.
 - Type a plain description, or use an explicit command:
   - `/find <query>` — show the best match with an explanation (also the
     default for plain text)

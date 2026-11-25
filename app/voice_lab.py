@@ -809,6 +809,12 @@ def _model_result(model, status, error=""):
     )
 
 
+def _download_voice_lab_model(model):
+    from indexing.model_downloader import download_model
+
+    return download_model(model, download_source="voice_lab")
+
+
 def evaluate_recordings(
     recordings=None,
     voice_lab_root=None,
@@ -832,9 +838,7 @@ def evaluate_recordings(
 
         api = HfApi()
     if downloader is None:
-        from indexing.model_downloader import download_model
-
-        downloader = download_model
+        downloader = download_voice_lab_model
 
     for candidate in VOICE_LAB_CANDIDATES:
         try:

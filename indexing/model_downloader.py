@@ -90,8 +90,20 @@ def _existing_complete_bytes(snapshot_dir, files):
     return completed
 
 
-def download_model(model, progress_cb=None, cancel_event=None):
+def download_model(
+    model,
+    progress_cb=None,
+    cancel_event=None,
+    download_source="application",
+):
     """Download and verify one pinned snapshot; Hub cache files allow resume."""
+    if download_source not in {
+        "application",
+        "voice_lab",
+        "vision_comparison",
+    }:
+        raise ValueError(f"Unsupported model download source: {download_source}")
+
     if model.get("status") not in {"ready", "untested"} or not model.get("repo_id"):
         raise ModelDownloadError("This model is planned and cannot be downloaded yet.")
 
@@ -181,7 +193,15 @@ def download_model(model, progress_cb=None, cancel_event=None):
             raise ModelDownloadCancelled("Model download cancelled.")
         marker_path = downloaded_path / ".smart-file-finder-complete.json"
         marker_path.write_text(
-            json.dumps({"repo_id": repo_id, "revision": revision}) + "\n",
+            json.dumps({
+                "repo_id": repo_id,
+                "revision": revision,
+                "download_source": download_source,
+                "files": {
+                    relative_path: int(size)
+                    for relative_path, size in files.items()
+                },
+            }) + "\n",
             encoding="utf-8",
         )
         report_progress(total_bytes)

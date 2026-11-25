@@ -28,6 +28,22 @@
       "summarizer": "no"
     }
   },
+  "superseded": [
+    {
+      "repo_id": "Systran/faster-whisper-tiny.en",
+      "name": "Whisper tiny.en",
+      "previous_tiers": ["small"],
+      "replaced_by": "Systran/faster-whisper-small.en",
+      "reason": "Former Low-tier default; retained only as an explicit Voice Lab comparison candidate."
+    },
+    {
+      "repo_id": "Systran/faster-whisper-base.en",
+      "name": "Whisper base.en",
+      "previous_tiers": ["mid"],
+      "replaced_by": "dropbox-dash/faster-whisper-large-v3-turbo",
+      "reason": "Former Mid-tier default; retained only as an explicit Voice Lab comparison candidate."
+    }
+  ],
   "models": [
       {
         "name": "all-mpnet-base-v2",
