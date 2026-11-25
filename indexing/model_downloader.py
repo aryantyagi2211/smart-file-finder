@@ -50,7 +50,7 @@ def _registry_models():
 
 
 def models_for_tier(tier):
-    """Return exactly the embedding and primary vision model for a tier."""
+    """Return exactly the required embedding, vision, and voice models."""
     config = json.loads(
         Path(get_config_path("model_tiers.json")).read_text(encoding="utf-8-sig")
     )
@@ -66,8 +66,8 @@ def missing_models_for_tier(tier):
     return missing
 
 
-def missing_voice_model_for_tier(tier):
-    model = get_voice_model_for_tier(tier)
+def missing_voice_model_for_tier(tier, model_name=None):
+    model = get_voice_model_for_tier(tier, model_name=model_name)
     if model is None or find_model(model["repo_id"]) is not None:
         return None
     return model

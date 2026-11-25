@@ -21,19 +21,19 @@ MODEL_TIER_DEFAULTS = {
         "big": {
             "min_ram_gb": 24,
             "min_vram_gb": 12,
-            "min_free_disk_gb": 17,
+            "min_free_disk_gb": 19,
             "vision_model": "google/gemma-4-E2B-it (4-bit)",
             "vision_model_repo_id": "google/gemma-4-E2B-it",
-            "whisper_model_size": "small/medium",
+            "whisper_model_size": "large-v3-turbo",
             "summarizer": "yes",
         },
         "mid": {
             "min_ram_gb": 12,
             "min_vram_gb": 4,
-            "min_free_disk_gb": 17,
+            "min_free_disk_gb": 19,
             "vision_model": "google/gemma-4-E2B-it (4-bit)",
             "vision_model_repo_id": "google/gemma-4-E2B-it",
-            "whisper_model_size": "base",
+            "whisper_model_size": "large-v3-turbo",
             "summarizer": "yes",
         },
         "small": {
@@ -42,7 +42,7 @@ MODEL_TIER_DEFAULTS = {
             "min_free_disk_gb": 3,
             "vision_model": "HuggingFaceTB/SmolVLM-500M-Instruct",
             "vision_model_repo_id": "HuggingFaceTB/SmolVLM-500M-Instruct",
-            "whisper_model_size": "tiny",
+            "whisper_model_size": "small.en",
             "summarizer": "no",
         },
     },
@@ -175,7 +175,7 @@ MODEL_TIER_DEFAULTS = {
             "revision": "0d3d19a32d3338f10357c0889762bd8d64bbdeba",
             "download_size_gb": 0.078090594,
             "download_size_bytes": 78090594,
-            "tiers": ["small"],
+            "tiers": [],
             "status": "ready",
             "license": "mit",
             "gated": False,
@@ -196,7 +196,7 @@ MODEL_TIER_DEFAULTS = {
             "revision": "3d3d5dee26484f91867d81cb899cfcf72b96be6c",
             "download_size_gb": 0.14776951,
             "download_size_bytes": 147769510,
-            "tiers": ["mid"],
+            "tiers": [],
             "status": "ready",
             "license": "mit",
             "gated": False,
@@ -217,7 +217,7 @@ MODEL_TIER_DEFAULTS = {
             "revision": "d1d751a5f8271d482d14ca55d9e2deeebbae577f",
             "download_size_gb": 0.486098798,
             "download_size_bytes": 486098798,
-            "tiers": ["big"],
+            "tiers": ["small"],
             "status": "ready",
             "license": "mit",
             "gated": False,
@@ -229,6 +229,28 @@ MODEL_TIER_DEFAULTS = {
                 "model.bin": 483545366,
                 "tokenizer.json": 2128466,
                 "vocabulary.txt": 422309,
+            },
+        },
+        {
+            "name": "Whisper large-v3-turbo",
+            "purpose": "voice",
+            "repo_id": "dropbox-dash/faster-whisper-large-v3-turbo",
+            "revision": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+            "download_size_gb": 1.621665983,
+            "download_size_bytes": 1621665983,
+            "tiers": ["mid", "big"],
+            "status": "ready",
+            "license": "mit",
+            "gated": False,
+            "language": "multilingual",
+            "engine": "faster-whisper",
+            "compute_type": "int8_float16",
+            "files": {
+                "config.json": 2263,
+                "model.bin": 1617884929,
+                "preprocessor_config.json": 340,
+                "tokenizer.json": 2710337,
+                "vocabulary.json": 1068114,
             },
         },
     ],
@@ -473,8 +495,18 @@ def get_required_models_for_tier(
     return embeddings + [vision, voice]
 
 
-def get_voice_model_for_tier(tier, config=None):
+def get_voice_model_for_tier(tier, config=None, model_name=None):
     registry = config or load_model_registry()
+    if model_name:
+        return next(
+            (
+                model for model in _all_models(registry)
+                if model.get("purpose") == "voice"
+                and model.get("name") == model_name
+                and model.get("status") == "ready"
+            ),
+            None,
+        )
     return next(
         (
             model for model in _all_models(registry)
@@ -517,6 +549,8 @@ def get_config_path(filename):
             "voice_hold_ms": 500,
             "voice_max_seconds": 15,
             "voice_auto_search": True,
+            "voice_model_override": "",
+            "voice_slow_hint_shown": False,
         },
         "model_tiers.json": MODEL_TIER_DEFAULTS,
         "harness_limits.json": {

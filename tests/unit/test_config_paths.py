@@ -56,6 +56,8 @@ def test_missing_settings_file_is_created_with_empty_folder_defaults(
         "voice_hold_ms": 500,
         "voice_max_seconds": 15,
         "voice_auto_search": True,
+        "voice_model_override": "",
+        "voice_slow_hint_shown": False,
     }
     assert any("settings.json" in message for message in messages)
 

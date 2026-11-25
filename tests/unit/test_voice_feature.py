@@ -7,9 +7,18 @@ import app_paths
 
 def test_tier_to_voice_model_mapping():
     config = app_paths.load_model_registry()
-    assert app_paths.get_voice_model_for_tier("small", config)["repo_id"].endswith("tiny.en")
-    assert app_paths.get_voice_model_for_tier("mid", config)["repo_id"].endswith("base.en")
-    assert app_paths.get_voice_model_for_tier("big", config)["repo_id"].endswith("small.en")
+    assert app_paths.get_voice_model_for_tier(
+        "small", config
+    )["repo_id"].endswith("small.en")
+    assert app_paths.get_voice_model_for_tier(
+        "mid", config
+    )["repo_id"] == "dropbox-dash/faster-whisper-large-v3-turbo"
+    assert app_paths.get_voice_model_for_tier(
+        "big", config
+    )["repo_id"] == "dropbox-dash/faster-whisper-large-v3-turbo"
+    assert app_paths.get_voice_model_for_tier(
+        "mid", config, model_name="Whisper small.en"
+    )["repo_id"].endswith("small.en")
 
 
 def test_missing_voice_model_triggers_consent(monkeypatch):
@@ -18,6 +27,75 @@ def test_missing_voice_model_triggers_consent(monkeypatch):
     model = app_paths.get_voice_model_for_tier("mid")
     monkeypatch.setattr(model_downloader, "find_model", lambda repo_id: None)
     assert model_downloader.missing_voice_model_for_tier("mid")["repo_id"] == model["repo_id"]
+
+
+def test_slow_voice_hint_is_one_time_and_uses_registry_download_size(
+    monkeypatch,
+):
+    from types import SimpleNamespace
+    from app import main
+
+    class FakeStatus:
+        def __init__(self):
+            self.messages = []
+
+        def show_notice(self, message):
+            self.messages.append(message)
+
+    class FakeTray:
+        def __init__(self):
+            self.messages = []
+
+        def showMessage(self, *args):
+            self.messages.append(args)
+
+    class FakeAction:
+        def __init__(self):
+            self.enabled = False
+
+        def setEnabled(self, value):
+            self.enabled = value
+
+    model = {
+        "name": "Whisper small.en",
+        "repo_id": "Systran/faster-whisper-small.en",
+        "download_size_bytes": 486098798,
+        "files": {},
+    }
+    monkeypatch.setattr(
+        main,
+        "get_voice_model_for_tier",
+        lambda _tier, model_name=None: model,
+    )
+    monkeypatch.setattr(
+        main,
+        "QSystemTrayIcon",
+        SimpleNamespace(
+            MessageIcon=SimpleNamespace(Information=1)
+        ),
+    )
+
+    instance = object.__new__(main.SmartFileFinderApp)
+    instance._voice_tier = "mid"
+    instance._slow_voice_hint_shown = False
+    instance._lighter_voice_offer_pending = False
+    instance.status_window = FakeStatus()
+    instance.tray_icon = FakeTray()
+    instance.lighter_voice_action = FakeAction()
+    saved = []
+    instance._save_voice_setting = lambda key, value: saved.append(
+        (key, value)
+    )
+
+    instance._on_slow_voice_detected(8.1, 5.0)
+    instance._on_slow_voice_detected(9.0, 5.0)
+
+    assert len(instance.tray_icon.messages) == 1
+    assert "Voice is slow on this PC" in instance.tray_icon.messages[0][1]
+    assert "486 MB" in instance.tray_icon.messages[0][1]
+    assert instance._lighter_voice_offer_pending
+    assert instance.lighter_voice_action.enabled
+    assert saved == [("voice_slow_hint_shown", True)]
 
 
 def test_import_failure_disables_voice(monkeypatch):

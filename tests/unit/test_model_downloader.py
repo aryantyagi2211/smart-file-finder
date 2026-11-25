@@ -393,15 +393,15 @@ def test_model_registry_defaults_keep_untested_big_model_optional(
     config_path = app_paths.get_config_path("model_tiers.json")
     config = json.loads(config_path.read_text(encoding="utf-8"))
 
-    assert len([model for model in config["models"] if model["status"] == "ready"]) == 7
+    assert len([model for model in config["models"] if model["status"] == "ready"]) == 8
     assert any(
         model["status"] == "untested"
         and model["repo_id"] == "google/gemma-4-E4B-it"
         for model in config["optional_models"]
     )
     assert config["tiers"]["small"]["min_free_disk_gb"] == 3
-    assert config["tiers"]["mid"]["min_free_disk_gb"] == 17
-    assert config["tiers"]["big"]["min_free_disk_gb"] == 17
+    assert config["tiers"]["mid"]["min_free_disk_gb"] == 19
+    assert config["tiers"]["big"]["min_free_disk_gb"] == 19
 
 
 def test_each_tier_requires_embedding_primary_vision_and_voice_models():
@@ -412,17 +412,17 @@ def test_each_tier_requires_embedding_primary_vision_and_voice_models():
     assert {model["repo_id"] for model in small} == {
         "sentence-transformers/all-mpnet-base-v2",
         "HuggingFaceTB/SmolVLM-500M-Instruct",
-        "Systran/faster-whisper-tiny.en",
+        "Systran/faster-whisper-small.en",
     }
     assert {model["repo_id"] for model in mid} == {
         "sentence-transformers/all-mpnet-base-v2",
         "google/gemma-4-E2B-it",
-        "Systran/faster-whisper-base.en",
+        "dropbox-dash/faster-whisper-large-v3-turbo",
     }
     assert {model["repo_id"] for model in big} == {
         "sentence-transformers/all-mpnet-base-v2",
         "google/gemma-4-E2B-it",
-        "Systran/faster-whisper-small.en",
+        "dropbox-dash/faster-whisper-large-v3-turbo",
     }
     assert "HuggingFaceTB/SmolVLM-500M-Instruct" not in {
         model["repo_id"] for model in mid + big

@@ -263,7 +263,7 @@ def _require_e4b_hardware():
     requirements = {
         "ram_gb": (24, "GB RAM"),
         "vram_gb": (12, "GB NVIDIA VRAM"),
-        "free_disk_gb": (26, "GB free disk"),
+        "free_disk_gb": (28, "GB free disk"),
     }
     unmet = [
         f"{minimum} {label} required (detected {profile.get(key, 0) or 0})"
@@ -360,7 +360,7 @@ def main():
         action="store_true",
         help=(
             "Download and benchmark optional Gemma E4B; requires at least "
-            "24 GB RAM, 12 GB NVIDIA VRAM, and 26 GB free disk."
+            "24 GB RAM, 12 GB NVIDIA VRAM, and 28 GB free disk."
         ),
     )
     parser.add_argument("--big-vision-model")

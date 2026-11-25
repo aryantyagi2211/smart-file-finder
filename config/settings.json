@@ -8,5 +8,7 @@
   "voice_key": "left alt",
   "voice_hold_ms": 500,
   "voice_max_seconds": 15,
-  "voice_auto_search": true
+  "voice_auto_search": true,
+  "voice_model_override": "",
+  "voice_slow_hint_shown": false
 }

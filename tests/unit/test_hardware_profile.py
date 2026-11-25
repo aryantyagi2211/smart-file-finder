@@ -235,7 +235,7 @@ def test_disk_minimums_follow_selected_required_model_payloads(
     assert {
         tier: config["tiers"][tier]["min_free_disk_gb"]
         for tier in ("small", "mid", "big")
-    } == {"small": 3, "mid": 17, "big": 17}
+    } == {"small": 3, "mid": 19, "big": 19}
 
     settings_path = app_paths.get_config_path("settings.json")
     settings = json.loads(settings_path.read_text(encoding="utf-8"))
@@ -243,8 +243,8 @@ def test_disk_minimums_follow_selected_required_model_payloads(
     settings_path.write_text(json.dumps(settings), encoding="utf-8")
 
     optional_config = hardware_profile.load_tier_config()
-    assert optional_config["tiers"]["big"]["min_free_disk_gb"] == 26
-    assert optional_config["tiers"]["mid"]["min_free_disk_gb"] == 17
+    assert optional_config["tiers"]["big"]["min_free_disk_gb"] == 28
+    assert optional_config["tiers"]["mid"]["min_free_disk_gb"] == 19
 
 
 def test_settings_missing_file_defaults_to_auto(tmp_path, monkeypatch):

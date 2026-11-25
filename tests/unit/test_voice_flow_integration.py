@@ -197,11 +197,18 @@ def test_alt_voice_flow_dispatches_through_real_query_handler(
         "information",
         lambda *_args: actions.append(("no_match_message", None)),
     )
-    monkeypatch.setattr(main, "missing_voice_model_for_tier", lambda _tier: None)
+    monkeypatch.setattr(
+        main,
+        "missing_voice_model_for_tier",
+        lambda _tier, model_name=None: None,
+    )
     monkeypatch.setattr(
         main,
         "get_voice_model_for_tier",
-        lambda _tier: {"repo_id": "test/local-voice-model"},
+        lambda _tier, model_name=None: {
+            "repo_id": "test/local-voice-model",
+            "name": "Whisper test",
+        },
     )
     monkeypatch.setattr(
         "app_paths.find_model", lambda _repo_id: "test/local-voice-model"

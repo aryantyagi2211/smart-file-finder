@@ -198,9 +198,9 @@ vision model:
 
 | Tier | Models downloaded during first setup | Approx. total download | Minimum free disk |
 |---|---|---:|---:|
-| Low (Small) | `all-mpnet-base-v2` (0.44 GB) + SmolVLM-500M (1.02 GB) + Whisper tiny.en (78 MB) | 1.54 GB | 3 GB |
-| Mid | `all-mpnet-base-v2` (0.44 GB) + Gemma 4 E2B-it 4-bit (10.28 GB) + Whisper base.en (148 MB) | 10.87 GB | 17 GB |
-| High (Big) | `all-mpnet-base-v2` (0.44 GB) + Gemma 4 E2B-it 4-bit (10.28 GB) + Whisper small.en (486 MB) | 11.20 GB | 17 GB |
+| Low (Small) | `all-mpnet-base-v2` (0.44 GB) + SmolVLM-500M (1.02 GB) + Whisper small.en (486 MB) | 1.945 GB | 3 GB |
+| Mid | `all-mpnet-base-v2` (0.44 GB) + Gemma 4 E2B-it 4-bit (10.28 GB) + Whisper large-v3-turbo (1.622 GB) | 12.339 GB | 19 GB |
+| High (Big) | `all-mpnet-base-v2` (0.44 GB) + Gemma 4 E2B-it 4-bit (10.28 GB) + Whisper large-v3-turbo (1.622 GB) | 12.339 GB | 19 GB |
 
 These are model payload sizes; additional free space is required for download
 and setup. On the first run, the status panel briefly reports that it is
@@ -210,12 +210,17 @@ During setup, each model download is named in sequence; after confirmation,
 the embedding, vision, and voice models are downloaded in one setup flow.
 During startup, the status distinguishes embedding, vision, and voice model
 loading from indexing progress. Vision loads when an image is indexed; voice
-loads on the first voice search. Voice transcription runs locally on CPU.
+loads on the first voice search. Low runs Whisper small.en on CPU int8. Mid
+and High try large-v3-turbo on CUDA int8_float16 after a device check and warm
+up; failures fall back to the same local files on CPU int8 without downloading
+another model. A CUDA out-of-memory decode retries once on CPU. Models unload
+after five idle minutes. If CPU turbo takes longer than 8 seconds for a
+5-second clip, the tray offers a consent-gated small.en alternative (486 MB).
 Small-tier image understanding runs on CPU; Mid and Big use the CUDA-capable
 Gemma vision model. Big currently uses the same E2B model as Mid; the stronger
 E4B model remains untested and is not included in the standard setup. If
 selected for Big, E4B adds about 16.02 GB and raises the free-disk minimum to
-26 GB.
+28 GB.
 
 ### Option 2 — Run from source
 

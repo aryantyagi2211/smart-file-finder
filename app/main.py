@@ -38,7 +38,10 @@ from app.hotkey_listener import (
 )
 from app.voice_hotkey import VoiceGesture
 from app.voice_recorder import VoiceRecorder, VoiceRecorderError
-from app.voice_transcriber import VoiceTranscriber
+from app.voice_transcriber import (
+    VoiceTranscriber,
+    should_offer_lighter_voice_model,
+)
 from app.voice_overlay import VoiceOverlay
 from app.input_bar import InputBar
 from app.command_parser import parse_command, parse_voice_command, Command
@@ -119,6 +122,8 @@ class VoiceBridge(QObject):
     text = pyqtSignal(str)
     partial_text = pyqtSignal(str)
     error = pyqtSignal(str)
+    model_status = pyqtSignal(str)
+    slow_voice = pyqtSignal(float, float)
 
 
 class LiveIndexHandler(FileSystemEventHandler):
@@ -227,6 +232,13 @@ class SmartFileFinderApp:
         tray_menu.addSeparator()
         self.voice_action = tray_menu.addAction("Voice search: On")
         self.voice_action.triggered.connect(self._toggle_voice)
+        self.lighter_voice_action = tray_menu.addAction(
+            "Use lighter voice model..."
+        )
+        self.lighter_voice_action.setEnabled(False)
+        self.lighter_voice_action.triggered.connect(
+            self._on_lighter_voice_action
+        )
         tray_menu.addSeparator()
         quit_action = tray_menu.addAction("Quit")
         quit_action.triggered.connect(self.app.quit)
@@ -253,11 +265,20 @@ class SmartFileFinderApp:
         self.voice_bridge.text.connect(self._on_voice_text)
         self.voice_bridge.partial_text.connect(self._on_voice_partial_text)
         self.voice_bridge.error.connect(self._on_voice_error)
+        self.voice_bridge.model_status.connect(self._on_voice_model_status)
+        self.voice_bridge.slow_voice.connect(self._on_slow_voice_detected)
         self.voice_recorder = VoiceRecorder(
             max_seconds=self._load_voice_setting("voice_max_seconds", 15)
         )
         self.voice_transcriber = None
         self._voice_tier = None
+        self._voice_model_override = str(
+            self._load_voice_setting("voice_model_override", "") or ""
+        )
+        self._slow_voice_hint_shown = bool(
+            self._load_voice_setting("voice_slow_hint_shown", False)
+        )
+        self._lighter_voice_offer_pending = False
         self.voice_available = self._check_voice_imports()
         self.voice_enabled = (
             self.voice_available
@@ -406,22 +427,35 @@ class SmartFileFinderApp:
         self._save_voice_setting("voice_enabled", self.voice_enabled)
         self._update_voice_tray_action()
         if self.voice_enabled and self._voice_tier is not None:
-            model = missing_voice_model_for_tier(self._voice_tier)
+            model_name = getattr(self, "_voice_model_override", "") or None
+            model = missing_voice_model_for_tier(
+                self._voice_tier, model_name=model_name
+            )
             if model is not None:
-                self._open_required_model_setup(
+                self._open_voice_model_setup(
+                    model,
                     self._on_voice_setup_download_ready,
                 )
         if hotkeys_registered:
             self._register_search_hotkeys()
 
-    def _open_required_model_setup(self, on_ready):
-        try:
-            missing = missing_models_for_tier(self._voice_tier)
-        except Exception as error:
-            log_voice_exception(f"required model lookup failed: {error}")
-            self._on_voice_error("Could not check the required local models.")
-            return
-        if not missing:
+    def _selected_voice_model(self):
+        if self._voice_tier is None:
+            return None
+        self._voice_model_override = str(
+            self._load_voice_setting("voice_model_override", "") or ""
+        )
+        return get_voice_model_for_tier(
+            self._voice_tier,
+            model_name=self._voice_model_override or None,
+        )
+
+    def _open_voice_model_setup(
+        self, model, on_ready, on_cancelled=None
+    ):
+        from app_paths import find_model
+
+        if find_model(model["repo_id"]) is not None:
             on_ready()
             return
         free_disk = None
@@ -434,8 +468,9 @@ class SmartFileFinderApp:
             log_voice_exception("could not read free disk for model setup")
         self._voice_setup_window = SetupWindow(
             self._voice_tier,
-            missing,
+            [model],
             free_disk,
+            purpose="voice",
             selection_reason=self._tier_reason,
             selection_mode=self._tier_mode,
         )
@@ -444,12 +479,103 @@ class SmartFileFinderApp:
         )
         self._voice_setup_window.ready.connect(on_ready)
         self._voice_setup_window.cancelled.connect(
-            self._on_voice_setup_cancelled
+            on_cancelled or self._on_voice_setup_cancelled
         )
         self._voice_setup_window.show()
 
     def _on_voice_setup_download_ready(self):
         self._voice_setup_window = None
+        set_huggingface_offline(True)
+
+    def _on_lighter_voice_model_ready(self):
+        self._voice_setup_window = None
+        set_huggingface_offline(True)
+        self._activate_lighter_voice_model()
+
+    def _on_lighter_voice_setup_cancelled(self):
+        self._voice_setup_window = None
+        set_huggingface_offline(True)
+
+    def _activate_lighter_voice_model(self):
+        self._lighter_voice_offer_pending = False
+        self.lighter_voice_action.setEnabled(False)
+        self._voice_model_override = "Whisper small.en"
+        self._save_voice_setting(
+            "voice_model_override", self._voice_model_override
+        )
+        if self.voice_transcriber is not None:
+            self.voice_transcriber.unload()
+            self.voice_transcriber = None
+        self.status_window.show_notice(
+            "Voice model switched to Whisper small.en (CPU int8)"
+        )
+        log_voice("user switched voice model to Whisper small.en")
+
+    def _on_slow_voice_detected(self, elapsed_seconds, clip_seconds):
+        if self._slow_voice_hint_shown:
+            return
+        self._slow_voice_hint_shown = True
+        self._save_voice_setting("voice_slow_hint_shown", True)
+        model = get_voice_model_for_tier(
+            self._voice_tier, model_name="Whisper small.en"
+        )
+        if model is None:
+            log_voice("lighter voice model offer skipped; registry entry missing")
+            return
+        size_mb = int(
+            (model.get("download_size_bytes") or sum(model["files"].values()))
+            / 1_000_000
+        )
+        self._lighter_voice_offer_pending = True
+        message = (
+            "Voice is slow on this PC. A lighter voice model is available. "
+            f"Use the tray menu to review the {size_mb} MB download."
+        )
+        self.lighter_voice_action.setEnabled(True)
+        self.status_window.show_notice(message)
+        self.tray_icon.showMessage(
+            "Voice is slow on this PC",
+            message,
+            QSystemTrayIcon.MessageIcon.Information,
+            15000,
+        )
+        log_voice(
+            "slow voice hint shown "
+            f"elapsed={elapsed_seconds:.2f}s clip={clip_seconds:.2f}s "
+            f"alternative_size_mb={size_mb}"
+        )
+
+    def _on_lighter_voice_action(self):
+        if not self._lighter_voice_offer_pending:
+            return
+        self._lighter_voice_offer_pending = False
+        self.lighter_voice_action.setEnabled(False)
+        model = get_voice_model_for_tier(
+            self._voice_tier, model_name="Whisper small.en"
+        )
+        if model is None:
+            log_voice("lighter voice model offer unavailable")
+            return
+        from app_paths import find_model
+
+        if find_model(model["repo_id"]) is not None:
+            answer = QMessageBox.question(
+                None,
+                "Switch to a lighter voice model?",
+                "Whisper small.en is already downloaded. Switch voice search "
+                "to this lighter CPU model?",
+                QMessageBox.StandardButton.Yes
+                | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                self._activate_lighter_voice_model()
+            return
+        self._open_voice_model_setup(
+            model,
+            self._on_lighter_voice_model_ready,
+            on_cancelled=self._on_lighter_voice_setup_cancelled,
+        )
 
     def _detect_hardware_in_background(self):
         profile = {}
@@ -511,7 +637,10 @@ class SmartFileFinderApp:
         self.status_window.show_status("Checking required models...")
         self.status_window.show()
         try:
-            model_entry = get_voice_model_for_tier(tier)
+            model_entry = get_voice_model_for_tier(
+                tier,
+                model_name=getattr(self, "_voice_model_override", "") or None,
+            )
             if model_entry is None:
                 log_voice(f"voice model path not found tier={tier}")
             else:
@@ -710,18 +839,22 @@ class SmartFileFinderApp:
         if self._voice_tier is None:
             self._on_voice_error("Voice search is not available yet")
             return
-        model = missing_voice_model_for_tier(self._voice_tier)
+        model_name = getattr(self, "_voice_model_override", "") or None
+        model = missing_voice_model_for_tier(
+            self._voice_tier, model_name=model_name
+        )
         if model is not None:
             log_voice(
                 f"voice model missing tier={self._voice_tier}; "
                 "opening model setup"
             )
-            self._open_required_model_setup(
+            self._open_voice_model_setup(
+                model,
                 self._on_voice_model_ready,
             )
             return
         try:
-            model_entry = get_voice_model_for_tier(self._voice_tier)
+            model_entry = self._selected_voice_model()
             model_path = None
             if model_entry is not None:
                 from app_paths import find_model
@@ -738,9 +871,11 @@ class SmartFileFinderApp:
                 self.voice_transcriber = VoiceTranscriber(
                     model_path=model_path,
                     model_name=model_entry["name"],
-                    model_status_callback=(
-                        self.progress_bridge.model_loading.emit
+                    prefer_cuda=(
+                        self._voice_tier in {"mid", "big"}
+                        and model_entry["name"] == "Whisper large-v3-turbo"
                     ),
+                    model_status_callback=self.voice_bridge.model_status.emit,
                 )
             recorder_started_at = time.perf_counter()
             self.voice_recorder.start()
@@ -766,10 +901,12 @@ class SmartFileFinderApp:
 
     def _on_voice_model_ready(self):
         self._voice_setup_window = None
+        set_huggingface_offline(True)
         self._start_voice_recording()
 
     def _on_voice_setup_cancelled(self):
         self._voice_setup_window = None
+        set_huggingface_offline(True)
         self.voice_enabled = False
         self._save_voice_setting("voice_enabled", False)
         self._update_voice_tray_action()
@@ -860,6 +997,7 @@ class SmartFileFinderApp:
 
     def _transcribe_voice_audio(self, audio, live_thread=None):
         transcription_started_at = time.perf_counter()
+        clip_seconds = len(audio) / self.voice_recorder.SAMPLE_RATE
         log_voice(f"transcription start samples={len(audio)}")
         try:
             if (
@@ -884,7 +1022,29 @@ class SmartFileFinderApp:
             f"seconds={time.perf_counter() - transcription_started_at:.3f} "
             f"text={text!r}"
         )
+        elapsed_seconds = time.perf_counter() - transcription_started_at
+        if should_offer_lighter_voice_model(
+            elapsed_seconds,
+            clip_seconds,
+            self._voice_tier,
+            getattr(self.voice_transcriber, "model_name", None),
+            getattr(self.voice_transcriber, "active_device", None),
+        ) and not getattr(self, "_slow_voice_hint_shown", False):
+            self.voice_bridge.slow_voice.emit(
+                elapsed_seconds, clip_seconds
+            )
         self.voice_bridge.text.emit(text)
+
+    def _on_voice_model_status(self, message):
+        self.progress_bridge.model_loading.emit(message)
+        if message.startswith("Voice using CPU int8"):
+            self.tray_icon.showMessage(
+                "Voice search is using CPU",
+                message,
+                QSystemTrayIcon.MessageIcon.Information,
+                10000,
+            )
+            log_voice(message)
 
     def _on_voice_text(self, text):
         text = str(text or "").strip()

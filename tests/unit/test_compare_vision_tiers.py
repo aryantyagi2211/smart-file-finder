@@ -44,7 +44,7 @@ def test_e4b_comparison_accepts_minimum_hardware(monkeypatch):
         lambda: {
             "ram_gb": 24,
             "vram_gb": 12,
-            "free_disk_gb": 26,
+            "free_disk_gb": 28,
         },
     )
 
