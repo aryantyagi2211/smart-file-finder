@@ -22,8 +22,8 @@ def _registry():
     vision = _entry("test/vision", "vision", ["small"])
     voice = _entry("test/voice", "voice", ["small"])
     candidate = _entry("test/voice-lab", "voice", [])
+    candidate["benchmark_only"] = True
     superseded = _entry("test/old-voice", "voice", [])
-    external = _entry("test/external-candidate", "voice", [])
     other_tier = _entry("test/other-tier", "voice", ["big"])
     return {
         "tiers": {
@@ -32,7 +32,7 @@ def _registry():
             "big": {"vision_model_repo_id": vision["repo_id"]},
         },
         "models": [
-            embedding, vision, voice, candidate, superseded, external,
+            embedding, vision, voice, candidate, superseded,
             other_tier,
         ],
         "optional_models": [],
@@ -40,6 +40,50 @@ def _registry():
             "repo_id": superseded["repo_id"],
             "reason": "Replaced by the current tier voice model.",
         }],
+    }
+
+
+def _tier_registry():
+    embedding = _entry(
+        "sentence-transformers/all-mpnet-base-v2",
+        "embedding",
+        ["small", "mid", "big"],
+    )
+    gemma = _entry("google/gemma-4-E2B-it", "vision", ["mid", "big"])
+    smol = _entry(
+        "HuggingFaceTB/SmolVLM-500M-Instruct",
+        "vision",
+        ["small"],
+    )
+    low_voice = _entry("Systran/faster-whisper-small.en", "voice", ["small"])
+    turbo = _entry(
+        "dropbox-dash/faster-whisper-large-v3-turbo",
+        "voice",
+        ["mid", "big"],
+    )
+    candidate = _entry("test/vision-candidate", "vision", [])
+    candidate["benchmark_only"] = True
+    tiny = _entry("Systran/faster-whisper-tiny.en", "voice", [])
+    base = _entry("Systran/faster-whisper-base.en", "voice", [])
+    optional = _entry("google/gemma-4-E4B-it", "vision", [])
+    optional.update({
+        "for_tier": "big",
+        "setting_value": "gemma-4-E4B-it",
+    })
+    return {
+        "tiers": {
+            "small": {"vision_model_repo_id": smol["repo_id"]},
+            "mid": {"vision_model_repo_id": gemma["repo_id"]},
+            "big": {"vision_model_repo_id": gemma["repo_id"]},
+        },
+        "models": [
+            embedding, gemma, smol, low_voice, turbo, candidate, tiny, base,
+        ],
+        "optional_models": [optional],
+        "superseded": [
+            {"repo_id": tiny["repo_id"]},
+            {"repo_id": base["repo_id"]},
+        ],
     }
 
 
@@ -118,12 +162,13 @@ def test_scan_classifies_in_use_candidate_superseded_and_external(tmp_path):
         model["repo_id"]: model
         for model in registry["models"]
     }
-    _write_model(app_models, entries["test/embedding"])
+    _write_model(shared_cache, entries["test/embedding"])
     _write_model(app_models, entries["test/vision"])
     _write_model(app_models, entries["test/voice"])
     _write_model(app_models, entries["test/voice-lab"])
     _write_model(app_models, entries["test/old-voice"])
-    _write_model(shared_cache, entries["test/external-candidate"])
+    external = _entry("test/external-candidate", "voice", [])
+    _write_model(shared_cache, external)
 
     scanned = model_cleanup.scan_model_folders(
         app_data_dir=tmp_path / "app",
@@ -136,11 +181,109 @@ def test_scan_classifies_in_use_candidate_superseded_and_external(tmp_path):
     by_repo = {model.repo_id: model for model in scanned}
 
     assert by_repo["test/embedding"].status == "IN USE"
+    assert by_repo["test/embedding"].is_external
     assert by_repo["test/voice-lab"].status == "CANDIDATE"
     assert by_repo["test/old-voice"].status == "SUPERSEDED"
     assert by_repo["test/external-candidate"].status == "EXTERNAL"
-    assert by_repo["test/external-candidate"].underlying_status == "CANDIDATE"
+    assert by_repo["test/external-candidate"].underlying_status == "EXTERNAL"
     assert by_repo["test/external-candidate"].is_external
+
+
+def test_classification_rules_on_low_mid_and_high_tiers(tmp_path):
+    registry = _tier_registry()
+    app_models = tmp_path / "app" / "models"
+    for model in registry["models"] + registry["optional_models"]:
+        _write_model(app_models, model)
+    shared_cache = tmp_path / "shared"
+    external = _entry("another-project/model", "text", [])
+    _write_model(shared_cache, external)
+
+    scans = {}
+    for tier in ("small", "mid", "big"):
+        scans[tier] = {
+            model.repo_id: model
+            for model in model_cleanup.scan_model_folders(
+                app_data_dir=tmp_path / "app",
+                app_models_dir=app_models,
+                hub_cache_dirs=[shared_cache],
+                registry=registry,
+                settings={},
+                current_tier=tier,
+            )
+        }
+
+    embed = "sentence-transformers/all-mpnet-base-v2"
+    gemma = "google/gemma-4-E2B-it"
+    smol = "HuggingFaceTB/SmolVLM-500M-Instruct"
+    low_voice = "Systran/faster-whisper-small.en"
+    turbo = "dropbox-dash/faster-whisper-large-v3-turbo"
+    candidate = "test/vision-candidate"
+    tiny = "Systran/faster-whisper-tiny.en"
+    external_id = "another-project/model"
+
+    for tier in ("small", "mid", "big"):
+        assert scans[tier][embed].status == "IN USE"
+    assert scans["small"][gemma].status == "OTHER TIER"
+    assert scans["small"][gemma].protected
+    assert scans["mid"][gemma].status == "IN USE"
+    assert scans["big"][gemma].status == "IN USE"
+    assert scans["small"][smol].status == "IN USE"
+    assert scans["mid"][smol].status == "FALLBACK"
+    assert scans["big"][smol].status == "FALLBACK"
+    assert scans["mid"][smol].protected
+    assert scans["small"][low_voice].status == "IN USE"
+    assert scans["mid"][low_voice].status == "OTHER TIER"
+    assert scans["big"][low_voice].status == "OTHER TIER"
+    assert scans["small"][turbo].status == "OTHER TIER"
+    assert scans["mid"][turbo].status == "IN USE"
+    assert scans["big"][turbo].status == "IN USE"
+    for tier in ("small", "mid", "big"):
+        assert scans[tier][candidate].status == "CANDIDATE"
+        assert scans[tier][tiny].status == "SUPERSEDED"
+        assert scans[tier][external_id].status == "EXTERNAL"
+        assert "Low" in scans[tier][low_voice].reason or tier == "small"
+
+    selected_optional = {
+        model.repo_id: model
+        for model in model_cleanup.scan_model_folders(
+            app_data_dir=tmp_path / "app",
+            app_models_dir=app_models,
+            hub_cache_dirs=[],
+            registry=registry,
+            settings={"big_vision_model": "gemma-4-E4B-it"},
+            current_tier="big",
+        )
+    }
+    assert selected_optional["google/gemma-4-E4B-it"].status == "IN USE"
+
+
+def test_incomplete_fallback_cache_is_not_classified_as_fallback(tmp_path):
+    registry = _tier_registry()
+    smol = next(
+        model for model in registry["models"]
+        if model["repo_id"] == "HuggingFaceTB/SmolVLM-500M-Instruct"
+    )
+    shared_cache = tmp_path / "shared"
+    _write_hf_snapshot(
+        shared_cache,
+        smol,
+        "partial-revision",
+        {"config.json": b"partial"},
+        refs=("main",),
+    )
+
+    scanned = model_cleanup.scan_model_folders(
+        app_data_dir=tmp_path / "app",
+        app_models_dir=tmp_path / "app" / "models",
+        hub_cache_dirs=[shared_cache],
+        registry=registry,
+        settings={},
+        current_tier="mid",
+    )
+
+    assert len(scanned) == 1
+    assert not scanned[0].complete
+    assert scanned[0].status == "OTHER TIER"
 
 
 def test_voice_lab_download_source_overrides_superseded_classification(tmp_path):
@@ -250,6 +393,51 @@ def test_external_cache_warns_and_empty_confirmation_defaults_to_no(tmp_path):
     assert "[y/N]:" in prompts[0]
     assert any("WARNING" in line for line in output)
     assert any("other projects" in line for line in output)
+
+
+def test_fallback_and_other_tier_warnings_default_to_no_but_allow_consent(
+    tmp_path,
+):
+    for status in ("FALLBACK", "OTHER TIER"):
+        model = _model(
+            tmp_path / status.lower(),
+            status=status,
+            underlying_status=status,
+            protected=status == "FALLBACK",
+        )
+        prompts = []
+        output = []
+        removed = []
+
+        declined = model_cleanup.cleanup_models(
+            [model],
+            apply=True,
+            input_fn=lambda prompt: prompts.append(prompt) or "",
+            output_fn=output.append,
+            remove_model_folder=removed.append,
+        )
+
+        assert declined == []
+        assert removed == []
+        assert "[y/N]:" in prompts[0]
+        if status == "FALLBACK":
+            assert "next vision fallback" in "\n".join(output)
+            assert "protected fallback" in prompts[0]
+        else:
+            assert (
+                "needed if this PC's tier changes or for users of that tier"
+                in "\n".join(output)
+            )
+
+        accepted = model_cleanup.cleanup_models(
+            [model],
+            apply=True,
+            input_fn=lambda _prompt: "y",
+            output_fn=lambda _line: None,
+            remove_model_folder=removed.append,
+        )
+        assert accepted == [model]
+        assert removed == [model]
 
 
 def test_recordings_option_is_dry_run_then_requires_confirmation(tmp_path):
@@ -538,7 +726,7 @@ def test_missing_hf_cache_directory_does_not_crash(tmp_path):
     assert model_cleanup._scan_cache(tmp_path / "missing-cache") is None
 
 
-def test_app_data_vision_model_gemma_e2b_is_always_protected(tmp_path):
+def test_gemma_e2b_is_protected_when_assigned_to_other_tiers(tmp_path):
     gemma = _entry("google/gemma-4-E2B-it", "vision", ["mid", "big"])
     embedding = _entry("test/embedding", "embedding", ["small"])
     vision = _entry("test/small-vision", "vision", ["small"])
@@ -563,8 +751,20 @@ def test_app_data_vision_model_gemma_e2b_is_always_protected(tmp_path):
         current_tier="small",
     )
 
-    assert scanned[0].status == "IN USE"
+    assert scanned[0].status == "OTHER TIER"
     assert scanned[0].protected
+    deleted = model_cleanup.cleanup_models(
+        scanned,
+        apply=True,
+        input_fn=lambda _prompt: (_ for _ in ()).throw(
+            AssertionError("tier-assigned Gemma must never be prompted")
+        ),
+        output_fn=lambda _line: None,
+        remove_model_folder=lambda _model: (_ for _ in ()).throw(
+            AssertionError("tier-assigned Gemma must never be deleted")
+        ),
+    )
+    assert deleted == []
 
 
 def test_selected_optional_model_is_in_use_for_cleanup():
@@ -640,6 +840,8 @@ def test_cleanup_default_registry_lists_the_replaced_voice_models():
         "Systran/faster-whisper-tiny.en",
         "Systran/faster-whisper-base.en",
     }
+    assert "Systran/faster-whisper-small.en" not in superseded
+    assert "HuggingFaceTB/SmolVLM-500M-Instruct" not in superseded
 
 
 def load_registry():

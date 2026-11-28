@@ -19,6 +19,11 @@ from app_paths import (
 
 
 _TIER_NAMES = ("small", "mid", "big")
+_TIER_LABELS = {
+    "small": "Low",
+    "mid": "Mid",
+    "big": "High",
+}
 _CANDIDATE_SOURCES = {"voice_lab", "vision_comparison"}
 _NEVER_DELETE_REPO_IDS = {"google/gemma-4-E2B-it"}
 _COMPLETE_MARKER = ".smart-file-finder-complete.json"
@@ -398,6 +403,7 @@ def _cache_model_record(
     model,
     current_tier,
     required_repo_ids,
+    fallback_repo_ids,
     superseded,
     model_sources,
 ):
@@ -452,6 +458,8 @@ def _cache_model_record(
         superseded,
         sources,
         is_external,
+        fallback_repo_ids,
+        downloaded=complete,
     )
     if not complete:
         reason += "; no complete pinned snapshot could be verified"
@@ -510,7 +518,6 @@ def _required_repo_ids(registry, settings, current_tier):
     else:
         from app_paths import (
             get_required_models_for_tier,
-            get_voice_model_for_tier,
         )
 
         selected_vision = settings.get("big_vision_model", "gemma-4-E2B-it")
@@ -543,8 +550,31 @@ def _required_repo_ids(registry, settings, current_tier):
             if model.get("setting_value") == selected_vision
             and model.get("repo_id")
         )
-    result.update(_NEVER_DELETE_REPO_IDS)
     return result
+
+
+def _fallback_repo_ids(registry, settings, current_tier):
+    if current_tier not in _TIER_NAMES:
+        return set()
+    from app_paths import get_primary_vision_model_for_tier
+
+    tier_index = _TIER_NAMES.index(current_tier)
+    selected_vision = settings.get("big_vision_model", "gemma-4-E2B-it")
+    chain = []
+    for tier in reversed(_TIER_NAMES[:tier_index + 1]):
+        model = get_primary_vision_model_for_tier(
+            tier,
+            registry,
+            big_vision_model=selected_vision,
+        )
+        repo_id = model.get("repo_id") if model else None
+        if repo_id and repo_id not in chain:
+            chain.append(repo_id)
+    return set(chain[1:2])
+
+
+def _tier_label(tier):
+    return _TIER_LABELS.get(tier, str(tier))
 
 
 def _classify_model(
@@ -555,59 +585,81 @@ def _classify_model(
     superseded,
     sources,
     is_external,
+    fallback_repo_ids,
+    downloaded,
 ):
-    if repo_id in required_repo_ids or repo_id in _NEVER_DELETE_REPO_IDS:
-        underlying = "IN USE"
-        reason = (
-            f"required by the current {current_tier} tier"
-            if current_tier in _TIER_NAMES and repo_id in required_repo_ids
-            else "protected to preserve a registered performance-tier model"
-        )
-    elif sources and all(source in _CANDIDATE_SOURCES for source in sources):
-        underlying = "CANDIDATE"
-        reason = "downloaded for Voice Lab or vision comparison"
-    elif repo_id in superseded:
-        underlying = "SUPERSEDED"
-        reason = superseded[repo_id].get(
-            "reason", "listed as superseded in the model registry"
-        )
-    elif model and (
-        model.get("benchmark_only")
-        or model.get("candidate_tier")
-        or (
-            model.get("purpose") == "voice"
-            and not model.get("tiers")
-        )
-    ):
-        underlying = "CANDIDATE"
-        reason = "registered as a Voice Lab or vision comparison candidate"
-    elif model and model.get("tiers"):
-        registered_tiers = [
-            tier for tier in (model.get("tiers") or [])
-            if tier in _TIER_NAMES
-        ]
-        if current_tier not in _TIER_NAMES or current_tier in registered_tiers:
-            underlying = "IN USE"
-            reason = "required by a registered performance tier"
-        else:
-            underlying = "SUPERSEDED"
-            tier_names = ", ".join(registered_tiers)
-            reason = (
-                f"not required by the current {current_tier} tier; "
-                f"registry assigns it to {tier_names or 'no current tier'}"
-            )
-    else:
-        underlying = "SUPERSEDED"
-        reason = "not assigned to an active tier or registered as a candidate"
+    registered_tiers = (
+        set(model.get("tiers") or []) if model is not None else set()
+    )
+    optional_tier = model.get("for_tier") if model is not None else None
+    if optional_tier in _TIER_NAMES:
+        registered_tiers.add(optional_tier)
 
-    protected = underlying == "IN USE"
-    status = "EXTERNAL" if is_external else underlying
-    if is_external:
+    if model is None:
+        underlying = "EXTERNAL"
+        reason = "not present in the model registry; may belong to another project"
+    elif repo_id in required_repo_ids:
+        underlying = "IN USE"
+        tier = _tier_label(current_tier)
+        reason = f"required by the current {tier} tier"
+    elif repo_id in fallback_repo_ids and downloaded:
+        underlying = "FALLBACK"
+        reason = "next vision fallback for the current tier"
+    else:
+        assigned_tiers = [
+            tier for tier in _TIER_NAMES if tier in registered_tiers
+        ]
+        other_tiers = [
+            tier for tier in assigned_tiers
+            if tier != current_tier
+        ]
+        if other_tiers:
+            underlying = "OTHER TIER"
+            assigned = ", ".join(_tier_label(tier) for tier in other_tiers)
+            reason = (
+                f"assigned to {assigned}; needed if this PC's tier changes "
+                "or for users of that tier"
+            )
+        elif assigned_tiers:
+            tier_names = ", ".join(
+                _tier_label(tier) for tier in assigned_tiers
+            )
+            underlying = "OTHER TIER"
+            reason = (
+                f"registered for {tier_names} but not selected for the "
+                f"current {_tier_label(current_tier)} tier"
+            )
+        elif (
+            sources
+            and all(source in _CANDIDATE_SOURCES for source in sources)
+        ) or (
+            model.get("benchmark_only")
+            or model.get("candidate_tier")
+        ):
+            underlying = "CANDIDATE"
+            reason = "downloaded for Voice Lab or vision comparison"
+        elif repo_id in superseded:
+            underlying = "SUPERSEDED"
+            reason = superseded[repo_id].get(
+                "reason", "listed as superseded in the model registry"
+            )
+        else:
+            underlying = "CANDIDATE"
+            reason = "registered without a tier assignment"
+
+    protected = (
+        underlying in {"IN USE", "FALLBACK"}
+        or (
+            repo_id in _NEVER_DELETE_REPO_IDS
+            and bool(registered_tiers)
+        )
+    )
+    if is_external and model is None:
         reason = (
             "shared Hugging Face cache; other projects may use it. "
             + reason
         )
-    return status, underlying, protected, reason
+    return underlying, underlying, protected, reason
 
 
 def scan_model_folders(
@@ -629,6 +681,9 @@ def scan_model_folders(
     model_map = _registry_models_by_repo(registry)
     superseded = _superseded_entries(registry)
     required_repo_ids = _required_repo_ids(
+        registry, settings, current_tier
+    )
+    fallback_repo_ids = _fallback_repo_ids(
         registry, settings, current_tier
     )
     roots = (
@@ -678,6 +733,8 @@ def scan_model_folders(
                         superseded,
                         [],
                         is_external,
+                        fallback_repo_ids,
+                        downloaded=False,
                     )
                     found.append(ModelCache(
                         repo_id=repo_info.repo_id,
@@ -719,6 +776,7 @@ def scan_model_folders(
                     model=model,
                     current_tier=current_tier,
                     required_repo_ids=required_repo_ids,
+                    fallback_repo_ids=fallback_repo_ids,
                     superseded=superseded,
                     model_sources=[],
                 ))
@@ -753,15 +811,6 @@ def scan_model_folders(
             )
             sources = [] if linked_folder else _cache_sources(folder, repo_id)
             external = not _is_relative_to(folder, app_models_dir)
-            status, underlying, protected, reason = _classify_model(
-                repo_id,
-                model,
-                current_tier,
-                required_repo_ids,
-                superseded,
-                sources,
-                external,
-            )
             if linked_folder:
                 size_bytes, errors = 0, ["cache folder is a link"]
                 has_reparse_directory = False
@@ -772,6 +821,17 @@ def scan_model_folders(
                 not linked_folder
                 and bool(complete_snapshots)
                 and not has_reparse_directory
+            )
+            status, underlying, protected, reason = _classify_model(
+                repo_id,
+                model,
+                current_tier,
+                required_repo_ids,
+                superseded,
+                sources,
+                external,
+                fallback_repo_ids,
+                downloaded=complete,
             )
             if not complete:
                 reason += "; no complete pinned snapshot could be verified"
@@ -872,6 +932,26 @@ def _print_model(model, output_fn=print):
     protected = " [protected]" if model.protected else ""
     complete = "complete" if model.complete else "incomplete"
     name = model.model_name or model.repo_id
+    location = (
+        "shared Hugging Face cache"
+        if model.is_external
+        else "app models folder"
+    )
+    if model.status == "IN USE":
+        deletable = f"No - {model.reason}"
+    elif (
+        model.repo_id in _NEVER_DELETE_REPO_IDS
+        and model.protected
+    ):
+        deletable = "No - protected while assigned to a performance tier"
+    elif model.status == "FALLBACK":
+        deletable = "Only after fallback warning and explicit confirmation"
+    elif model.status == "OTHER TIER":
+        deletable = "Yes - explicit other-tier warning and confirmation"
+    elif model.status == "EXTERNAL":
+        deletable = "Yes - shared-cache warning; confirmation defaults to No"
+    else:
+        deletable = "Yes - confirmation required (default No)"
     registry_size = (
         _format_gb(model.registry_size_bytes)
         if model.registry_size_bytes
@@ -881,9 +961,10 @@ def _print_model(model, output_fn=print):
     output_fn(
         f"{model.status}{protected} | {name} ({model.repo_id}) | "
         f"real {_format_gb(model.size_bytes)} | registry {registry_size} | "
-        f"{complete}{mismatch} | {model.path} | {model.reason}"
+        f"{complete}{mismatch} | location: {location} | {model.path} | "
+        f"deletable: {deletable} | {model.reason}"
     )
-    if model.is_external:
+    if model.is_external and model.status == "EXTERNAL":
         output_fn(
             "  WARNING: This is a shared Hugging Face cache; other projects "
             "on this PC may use these files."
@@ -901,7 +982,13 @@ def _safe_remove_model_folder(model):
     if (
         model.status == "IN USE"
         or model.underlying_status == "IN USE"
-        or model.protected
+        or (
+            model.protected
+            and not (
+                model.status == "FALLBACK"
+                and model.repo_id not in _NEVER_DELETE_REPO_IDS
+            )
+        )
     ):
         raise ValueError(f"Refusing to delete protected model: {model.repo_id}")
     if not model.complete:
@@ -1015,10 +1102,37 @@ def cleanup_models(
         if (
             model.status == "IN USE"
             or model.underlying_status == "IN USE"
-            or model.protected
+            or (
+                model.protected
+                and not (
+                    model.status == "FALLBACK"
+                    and model.repo_id not in _NEVER_DELETE_REPO_IDS
+                )
+            )
         ):
-            output_fn(f"Keeping {model.repo_id}: IN USE models cannot be deleted.")
+            if (
+                model.repo_id in _NEVER_DELETE_REPO_IDS
+                and model.protected
+            ):
+                output_fn(
+                    f"Keeping {model.repo_id}: protected while assigned "
+                    "to a performance tier."
+                )
+            else:
+                output_fn(
+                    f"Keeping {model.repo_id}: IN USE models cannot be deleted."
+                )
             continue
+        if model.status == "FALLBACK":
+            output_fn(
+                f"WARNING: {model.repo_id} is the next vision fallback. "
+                "Deleting it may reduce fallback coverage."
+            )
+        if model.status == "OTHER TIER":
+            output_fn(
+                f"WARNING: {model.repo_id} is needed if this PC's tier "
+                "changes or for users of that tier."
+            )
         if model.is_external:
             output_fn(
                 "WARNING: Removing this shared cache entry may affect other "
@@ -1046,10 +1160,17 @@ def cleanup_models(
             )
 
         incomplete_note = " [INCOMPLETE]" if not model.complete else ""
-        prompt = (
-            f"Delete {model.repo_id}{incomplete_note} "
-            f"({_format_size(model.size_bytes)}) at {model.path}? [y/N]: "
-        )
+        if model.status == "FALLBACK":
+            prompt = (
+                f"Delete protected fallback {model.repo_id}{incomplete_note} "
+                f"({_format_size(model.size_bytes)}) at {model.path}? "
+                "[y/N]: "
+            )
+        else:
+            prompt = (
+                f"Delete {model.repo_id}{incomplete_note} "
+                f"({_format_size(model.size_bytes)}) at {model.path}? [y/N]: "
+            )
         if not _confirm(prompt, input_fn):
             output_fn(f"Kept {model.repo_id}.")
             continue

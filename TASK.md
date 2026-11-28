@@ -75,7 +75,8 @@ Status: **Implemented; real-device checks remain** — holding the configured Al
 
 ## Model cleanup
 
-- `python -m app.model_cleanup` inventories app-local and Hugging Face cached model folders as a dry run. It reports repo id, disk size, path, and IN USE / CANDIDATE / SUPERSEDED / EXTERNAL status.
-- `--apply` asks default-no confirmation per complete cache folder. IN USE models are never deletable; EXTERNAL shared-cache models warn that other projects may use them. Gemma 4 E2B stays protected.
+- `python -m app.model_cleanup` inventories app-local and Hugging Face cached model folders as a dry run. Status is independent of location: IN USE, FALLBACK, OTHER TIER (with tier), CANDIDATE, SUPERSEDED, or EXTERNAL (not in the registry).
+- FALLBACK models require a specific warning and explicit default-no confirmation; OTHER TIER models warn that they are needed if this PC's tier changes or for users of that tier. IN USE models cannot be deleted. Shared-cache location is shown separately from status, and Gemma 4 E2B remains protected while assigned to a tier.
+- The superseded registry list contains only former tier defaults tiny.en and base.en; current Low-tier small.en and SmolVLM-500M are not obsolete.
 - Hugging Face cache sizes come from `scan_cache_dir()` so snapshot links are not mistaken for stored bytes. The inventory compares real disk size with the registry download size, flags differences over 10%, and reports incomplete revisions. Confirmed HF-cache removal uses `delete_revisions()` and checks freed space with a second scan.
 - `python -m app.model_cleanup --voice-lab-recordings` reports the local Voice Lab recordings folder; removal requires `--apply` and explicit confirmation. Only dry-run inventories were performed during implementation; no model or recording folders were deleted.
