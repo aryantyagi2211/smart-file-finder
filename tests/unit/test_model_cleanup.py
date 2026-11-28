@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 from app import model_cleanup
@@ -61,6 +62,30 @@ def _write_model(root, model, source=None):
             encoding="utf-8",
         )
     return repo_folder
+
+
+def _write_hf_snapshot(cache_root, model, revision, file_contents, refs=()):
+    import hashlib
+
+    repo_folder = Path(cache_root) / (
+        "models--" + model["repo_id"].replace("/", "--")
+    )
+    blobs = repo_folder / "blobs"
+    snapshot = repo_folder / "snapshots" / revision
+    blobs.mkdir(parents=True, exist_ok=True)
+    snapshot.mkdir(parents=True, exist_ok=True)
+    for name, content in file_contents.items():
+        blob_name = hashlib.sha256(content).hexdigest()
+        blob = blobs / blob_name
+        blob.write_bytes(content)
+        link = snapshot / name
+        link.parent.mkdir(parents=True, exist_ok=True)
+        os.symlink(blob, link)
+    for ref in refs:
+        refs_dir = repo_folder / "refs"
+        refs_dir.mkdir(parents=True, exist_ok=True)
+        (refs_dir / ref).write_text(revision, encoding="utf-8")
+    return repo_folder, snapshot
 
 
 def _model(
@@ -308,6 +333,211 @@ def test_cache_roots_include_app_hf_home_and_default_hub(tmp_path):
     ]
 
 
+def test_hf_cache_size_counts_blob_storage_behind_snapshot_symlinks(
+    tmp_path,
+):
+    registry = _registry()
+    model = next(
+        entry for entry in registry["models"]
+        if entry["repo_id"] == "test/voice-lab"
+    )
+    app_models = tmp_path / "app" / "models"
+    _write_hf_snapshot(
+        app_models,
+        model,
+        "rev-1",
+        {"config.json": b"conf", "weights.bin": b"weights!"},
+        refs=("main",),
+    )
+
+    scanned = model_cleanup.scan_model_folders(
+        app_data_dir=tmp_path / "app",
+        app_models_dir=app_models,
+        hub_cache_dirs=[],
+        registry=registry,
+        settings={},
+        current_tier="small",
+    )
+
+    assert len(scanned) == 1
+    assert scanned[0].size_bytes == len(b"conf") + len(b"weights!")
+    assert scanned[0].registry_size_bytes == 12
+    assert not scanned[0].size_mismatch
+    assert scanned[0].complete
+
+
+def test_shared_hf_blob_is_counted_once_across_revisions(tmp_path):
+    registry = _registry()
+    model = next(
+        entry for entry in registry["models"]
+        if entry["repo_id"] == "test/voice-lab"
+    )
+    app_models = tmp_path / "app" / "models"
+    shared = {"config.json": b"conf", "weights.bin": b"weights!"}
+    _write_hf_snapshot(app_models, model, "rev-1", shared)
+    _write_hf_snapshot(
+        app_models,
+        model,
+        "rev-2",
+        shared,
+        refs=("main",),
+    )
+    cache_info = model_cleanup._scan_cache(app_models)
+    repo_info = next(
+        repo for repo in cache_info.repos
+        if repo.repo_id == model["repo_id"]
+    )
+
+    assert repo_info.size_on_disk == len(b"conf") + len(b"weights!")
+    assert len(repo_info.revisions) == 2
+    assert cache_info.delete_revisions("rev-1").expected_freed_size == 0
+    assert cache_info.delete_revisions(
+        "rev-1", "rev-2"
+    ).expected_freed_size == len(b"conf") + len(b"weights!")
+
+
+def test_cache_delete_strategy_shows_estimate_and_verifies_freed_space(
+    tmp_path,
+):
+    registry = _registry()
+    model = next(
+        entry for entry in registry["models"]
+        if entry["repo_id"] == "test/voice-lab"
+    )
+    app_models = tmp_path / "app" / "models"
+    _write_hf_snapshot(
+        app_models,
+        model,
+        "rev-1",
+        {"config.json": b"conf", "weights.bin": b"weights!"},
+        refs=("main",),
+    )
+    scanned = model_cleanup.scan_model_folders(
+        app_data_dir=tmp_path / "app",
+        app_models_dir=app_models,
+        hub_cache_dirs=[],
+        registry=registry,
+        settings={},
+        current_tier="small",
+    )
+    output = []
+    deleted = model_cleanup.cleanup_models(
+        scanned,
+        apply=True,
+        input_fn=lambda _prompt: "y",
+        output_fn=output.append,
+    )
+
+    assert len(deleted) == 1
+    assert any("expects to free 12 B" in line for line in output)
+    assert any("Verified after deletion" in line for line in output)
+    assert any("decreased by 12 B" in line for line in output)
+    after = model_cleanup._scan_cache(app_models)
+    assert after is not None
+    assert all(repo.repo_id != model["repo_id"] for repo in after.repos)
+
+
+def test_cache_delete_rejects_linked_model_folder(tmp_path, monkeypatch):
+    registry = _registry()
+    model = next(
+        entry for entry in registry["models"]
+        if entry["repo_id"] == "test/voice-lab"
+    )
+    app_models = tmp_path / "app" / "models"
+    _write_hf_snapshot(
+        app_models,
+        model,
+        "rev-1",
+        {"config.json": b"conf", "weights.bin": b"weights!"},
+        refs=("main",),
+    )
+    scanned = model_cleanup.scan_model_folders(
+        app_data_dir=tmp_path / "app",
+        app_models_dir=app_models,
+        hub_cache_dirs=[],
+        registry=registry,
+        settings={},
+        current_tier="small",
+    )
+    monkeypatch.setattr(
+        model_cleanup,
+        "_is_reparse_point",
+        lambda _path: True,
+    )
+    monkeypatch.setattr(
+        model_cleanup,
+        "_delete_strategy_for_revisions",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("linked cache folders must not be deleted")
+        ),
+    )
+
+    assert model_cleanup._prepare_cache_delete(scanned[0]) is None
+
+
+def test_incomplete_hf_revision_requires_confirmation_and_is_deletable(
+    tmp_path,
+):
+    registry = _registry()
+    model = next(
+        entry for entry in registry["models"]
+        if entry["repo_id"] == "test/voice-lab"
+    )
+    app_models = tmp_path / "app" / "models"
+    _write_hf_snapshot(
+        app_models,
+        model,
+        "rev-1",
+        {"config.json": b"conf"},
+        refs=("main",),
+    )
+    scanned = model_cleanup.scan_model_folders(
+        app_data_dir=tmp_path / "app",
+        app_models_dir=app_models,
+        hub_cache_dirs=[],
+        registry=registry,
+        settings={},
+        current_tier="small",
+    )
+    assert not scanned[0].complete
+    output = []
+
+    deleted = model_cleanup.cleanup_models(
+        scanned,
+        apply=True,
+        input_fn=lambda prompt: output.append(prompt) or "y",
+        output_fn=output.append,
+    )
+
+    assert len(deleted) == 1
+    assert any("[INCOMPLETE]" in line for line in output)
+    assert any("Hugging Face cache strategy expects" in line for line in output)
+    assert any("Verified after deletion" in line for line in output)
+
+
+def test_non_cache_size_deduplicates_hardlinks_and_internal_symlinks(
+    tmp_path,
+):
+    model_folder = tmp_path / "model"
+    model_folder.mkdir()
+    blob = model_folder / "blob.bin"
+    blob.write_bytes(b"shared-data")
+    os.link(blob, model_folder / "hardlink.bin")
+    os.symlink(blob, model_folder / "symlink.bin")
+    outside = tmp_path / "outside.bin"
+    outside.write_bytes(b"must-not-be-counted")
+    os.symlink(outside, model_folder / "outside-link.bin")
+
+    size, errors = model_cleanup._size_on_disk(model_folder)
+
+    assert size == len(b"shared-data")
+    assert errors == []
+
+
+def test_missing_hf_cache_directory_does_not_crash(tmp_path):
+    assert model_cleanup._scan_cache(tmp_path / "missing-cache") is None
+
+
 def test_app_data_vision_model_gemma_e2b_is_always_protected(tmp_path):
     gemma = _entry("google/gemma-4-E2B-it", "vision", ["mid", "big"])
     embedding = _entry("test/embedding", "embedding", ["small"])
@@ -372,20 +602,32 @@ def test_safe_delete_targets_only_the_model_repo_folder(tmp_path, monkeypatch):
     assert model_folder.is_dir()
 
 
-def test_no_complete_snapshot_is_not_deletable(tmp_path):
+def test_incomplete_folder_requires_explicit_confirmation(tmp_path):
     incomplete = _model(tmp_path, complete=False)
     calls = []
+    output = []
 
-    deleted = model_cleanup.cleanup_models(
+    declined = model_cleanup.cleanup_models(
+        [incomplete],
+        apply=True,
+        input_fn=lambda _prompt: "n",
+        output_fn=output.append,
+        remove_model_folder=calls.append,
+    )
+
+    assert declined == []
+    assert calls == []
+    assert any("INCOMPLETE" in line for line in output)
+
+    accepted = model_cleanup.cleanup_models(
         [incomplete],
         apply=True,
         input_fn=lambda _prompt: "y",
         output_fn=lambda _line: None,
         remove_model_folder=calls.append,
     )
-
-    assert deleted == []
-    assert calls == []
+    assert accepted == [incomplete]
+    assert calls == [incomplete]
 
 
 def test_cleanup_default_registry_lists_the_replaced_voice_models():

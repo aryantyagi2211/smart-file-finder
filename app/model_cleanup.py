@@ -37,6 +37,14 @@ class ModelCache:
     reason: str
     is_external: bool
     scan_error: str = ""
+    registry_size_bytes: int = 0
+    size_mismatch: bool = False
+    revision_hashes: tuple = ()
+    incomplete_revisions: tuple = ()
+    cache_layout: bool = True
+    model_name: str = ""
+    purpose: str = ""
+    incomplete_size_bytes: int = 0
 
 
 def _read_json(path, default):
@@ -243,36 +251,241 @@ def _size_on_disk(directory):
     def record_walk_error(error):
         errors.append(str(error))
 
+    visited_directories = set()
     for root, directory_names, file_names in os.walk(
         directory,
         topdown=True,
-        followlinks=False,
+        followlinks=True,
         onerror=record_walk_error,
     ):
-        directory_names[:] = [
-            name for name in directory_names
-            if not _is_reparse_point(Path(root) / name)
-        ]
-        for file_name in file_names:
-            path = Path(root) / file_name
+        root_path = Path(root)
+        try:
+            root_stat = root_path.stat()
+            root_id = (root_stat.st_dev, root_stat.st_ino)
+        except OSError as error:
+            errors.append(f"{root_path}: {error}")
+            directory_names[:] = []
+            continue
+        if root_id in visited_directories:
+            directory_names[:] = []
+            continue
+        visited_directories.add(root_id)
+
+        safe_directories = []
+        for name in directory_names:
+            candidate = root_path / name
             try:
-                if _is_reparse_point(path) and not _is_relative_to(
-                    path.resolve(), directory
-                ):
+                resolved = candidate.resolve()
+                resolved.relative_to(Path(directory).resolve())
+                candidate_stat = candidate.stat()
+            except (OSError, ValueError):
+                if _is_reparse_point(candidate):
                     continue
-                stat = path.stat()
+                safe_directories.append(name)
+                continue
+            if not stat.S_ISDIR(candidate_stat.st_mode):
+                continue
+            safe_directories.append(name)
+        directory_names[:] = safe_directories
+
+        for file_name in file_names:
+            path = root_path / file_name
+            try:
+                resolved = path.resolve()
+                resolved.relative_to(Path(directory).resolve())
+                file_stat = path.stat()
+                if not stat.S_ISREG(file_stat.st_mode):
+                    continue
             except OSError as error:
                 errors.append(f"{path}: {error}")
                 continue
+            except ValueError:
+                if _is_reparse_point(path):
+                    continue
+                errors.append(f"{path}: resolved outside model folder")
+                continue
             identity = (
-                (stat.st_dev, stat.st_ino)
-                if stat.st_ino
-                else os.path.normcase(str(path.resolve()))
+                (file_stat.st_dev, file_stat.st_ino)
+                if file_stat.st_ino
+                else os.path.normcase(str(resolved))
             )
             if identity not in identities:
                 identities.add(identity)
-                total += stat.st_size
+                total += file_stat.st_size
     return total, errors
+
+
+def _scan_cache(cache_root):
+    from huggingface_hub import scan_cache_dir
+    from huggingface_hub.errors import CacheNotFound
+
+    try:
+        return scan_cache_dir(cache_dir=cache_root)
+    except CacheNotFound:
+        return None
+
+
+def _cache_info_total_size(cache_info):
+    if cache_info is None:
+        return 0
+    return sum(int(repo.size_on_disk) for repo in cache_info.repos)
+
+
+def _registry_download_size(model):
+    if not model:
+        return 0
+    return int(
+        model.get("download_size_bytes")
+        or sum(model.get("files", {}).values())
+    )
+
+
+def _delete_strategy_for_revisions(model, revision_hashes):
+    cache_info = _scan_cache(model.cache_root)
+    repo_info = _find_repo_info(cache_info, model.repo_id)
+    if repo_info is None:
+        return None, None, None
+    available = {
+        revision.commit_hash for revision in repo_info.revisions
+    }
+    selected = tuple(
+        revision_hash for revision_hash in revision_hashes
+        if revision_hash in available
+    )
+    if not selected:
+        return cache_info, repo_info, None
+    strategy = cache_info.delete_revisions(*selected)
+    target_repo_path = os.path.normcase(
+        str(Path(repo_info.repo_path).resolve())
+    )
+    strategy_repo_paths = {
+        os.path.normcase(str(Path(path).resolve()))
+        for path in strategy.repos
+    }
+    if strategy_repo_paths and strategy_repo_paths != {target_repo_path}:
+        raise RuntimeError(
+            "The Hugging Face delete strategy includes folders outside "
+            f"{repo_info.repo_path}; refusing to continue."
+        )
+    return cache_info, repo_info, strategy
+
+
+def _has_size_mismatch(size_bytes, registry_size_bytes):
+    return bool(
+        registry_size_bytes
+        and abs(size_bytes - registry_size_bytes) / registry_size_bytes > 0.10
+    )
+
+
+def _complete_revision_hashes(repo_id, model, revisions):
+    if model is None:
+        return set()
+    return {
+        revision.commit_hash
+        for revision in revisions
+        if _snapshot_is_complete(
+            Path(revision.snapshot_path),
+            repo_id,
+            model,
+        )
+    }
+
+
+def _cache_model_record(
+    repo_info,
+    cache_root,
+    app_models_dir,
+    model,
+    current_tier,
+    required_repo_ids,
+    superseded,
+    model_sources,
+):
+    repo_id = repo_info.repo_id
+    repo_folder = Path(repo_info.repo_path)
+    revisions = tuple(repo_info.revisions)
+    if model is not None:
+        completed_revisions = _complete_revision_hashes(
+            repo_id,
+            model,
+            revisions,
+        )
+        incomplete_revisions = tuple(
+            revision.commit_hash for revision in revisions
+            if revision.commit_hash not in completed_revisions
+        )
+        complete = bool(completed_revisions)
+        incomplete_size_bytes = sum(
+            int(revision.size_on_disk)
+            for revision in revisions
+            if revision.commit_hash in incomplete_revisions
+        )
+        if not complete and not incomplete_revisions:
+            incomplete_size_bytes = int(repo_info.size_on_disk)
+    else:
+        completed_revisions = {
+            revision.commit_hash for revision in revisions
+            if revision.refs
+        }
+        incomplete_revisions = tuple(
+            revision.commit_hash for revision in revisions
+            if revision.commit_hash not in completed_revisions
+        )
+        complete = bool(completed_revisions)
+        incomplete_size_bytes = sum(
+            int(revision.size_on_disk)
+            for revision in revisions
+            if revision.commit_hash in incomplete_revisions
+        )
+    revision_hashes = tuple(
+        revision.commit_hash for revision in revisions
+    )
+    sources = _cache_sources(repo_folder, repo_id)
+    if model_sources:
+        sources.extend(model_sources)
+    is_external = not _is_relative_to(repo_folder, app_models_dir)
+    status, underlying, protected, reason = _classify_model(
+        repo_id,
+        model,
+        current_tier,
+        required_repo_ids,
+        superseded,
+        sources,
+        is_external,
+    )
+    if not complete:
+        reason += "; no complete pinned snapshot could be verified"
+    if incomplete_revisions:
+        reason += (
+            f"; {len(incomplete_revisions)} incomplete or unverified "
+            "revision(s) are present"
+        )
+
+    size_bytes = int(repo_info.size_on_disk)
+    registry_size_bytes = _registry_download_size(model)
+    return ModelCache(
+        repo_id=repo_id,
+        path=repo_folder,
+        cache_root=Path(cache_root),
+        size_bytes=size_bytes,
+        status=status,
+        underlying_status=underlying,
+        protected=protected,
+        complete=complete,
+        reason=reason,
+        is_external=is_external,
+        registry_size_bytes=registry_size_bytes,
+        size_mismatch=_has_size_mismatch(
+            size_bytes,
+            registry_size_bytes,
+        ),
+        revision_hashes=revision_hashes,
+        incomplete_revisions=incomplete_revisions,
+        cache_layout=True,
+        model_name=(model or {}).get("name", repo_id),
+        purpose=(model or {}).get("purpose", "unknown"),
+        incomplete_size_bytes=incomplete_size_bytes,
+    )
 
 
 def _superseded_entries(registry):
@@ -437,6 +650,79 @@ def scan_model_folders(
     for cache_root in cache_roots:
         if not cache_root.is_dir():
             continue
+        cache_info = _scan_cache(cache_root)
+        scanned_folders = set()
+        if cache_info is not None:
+            for repo_info in cache_info.repos:
+                folder = Path(repo_info.repo_path)
+                location_key = os.path.normcase(str(folder.resolve()))
+                if location_key in seen_locations:
+                    continue
+                seen_locations.add(location_key)
+                scanned_folders.add(folder.name)
+                model = next(
+                    iter(model_map.get(repo_info.repo_id, [])),
+                    None,
+                )
+                if _is_reparse_point(folder):
+                    revisions = tuple(repo_info.revisions)
+                    registry_size = _registry_download_size(model)
+                    is_external = not _is_relative_to(
+                        folder, app_models_dir
+                    )
+                    status, underlying, protected, reason = _classify_model(
+                        repo_info.repo_id,
+                        model,
+                        current_tier,
+                        required_repo_ids,
+                        superseded,
+                        [],
+                        is_external,
+                    )
+                    found.append(ModelCache(
+                        repo_id=repo_info.repo_id,
+                        path=folder,
+                        cache_root=cache_root,
+                        size_bytes=0,
+                        status=status,
+                        underlying_status=underlying,
+                        protected=protected,
+                        complete=False,
+                        reason=reason + "; repo folder is a link",
+                        is_external=is_external,
+                        scan_error="repo cache folder is a link",
+                        registry_size_bytes=registry_size,
+                        size_mismatch=_has_size_mismatch(
+                            0, registry_size
+                        ),
+                        revision_hashes=tuple(
+                            revision.commit_hash for revision in revisions
+                        ),
+                        incomplete_revisions=tuple(
+                            revision.commit_hash for revision in revisions
+                        ),
+                        cache_layout=True,
+                        model_name=(model or {}).get(
+                            "name", repo_info.repo_id
+                        ),
+                        purpose=(model or {}).get("purpose", "unknown"),
+                        incomplete_size_bytes=sum(
+                            int(revision.size_on_disk)
+                            for revision in revisions
+                        ),
+                    ))
+                    continue
+                found.append(_cache_model_record(
+                    repo_info=repo_info,
+                    cache_root=cache_root,
+                    app_models_dir=app_models_dir,
+                    model=model,
+                    current_tier=current_tier,
+                    required_repo_ids=required_repo_ids,
+                    superseded=superseded,
+                    model_sources=[],
+                ))
+
         try:
             folders = sorted(cache_root.iterdir())
         except OSError as error:
@@ -444,7 +730,11 @@ def scan_model_folders(
             continue
         for folder in folders:
             repo_id = _repo_id_from_folder(folder)
-            if repo_id is None or not folder.is_dir():
+            if (
+                repo_id is None
+                or not folder.is_dir()
+                or folder.name in scanned_folders
+            ):
                 continue
             location_key = os.path.normcase(str(folder.resolve()))
             if location_key in seen_locations:
@@ -501,6 +791,32 @@ def scan_model_folders(
                 reason=reason,
                 is_external=external,
                 scan_error="; ".join(errors),
+                registry_size_bytes=_registry_download_size(model),
+                size_mismatch=_has_size_mismatch(
+                    size_bytes,
+                    _registry_download_size(model),
+                ),
+                revision_hashes=tuple(
+                    snapshot.name
+                    for snapshot in (folder / "snapshots").iterdir()
+                ) if (folder / "snapshots").is_dir() else (),
+                incomplete_revisions=(
+                    tuple(
+                        snapshot.name
+                        for snapshot in (folder / "snapshots").iterdir()
+                        if snapshot not in complete_snapshots
+                    )
+                    if (folder / "snapshots").is_dir()
+                    else ()
+                ),
+                cache_layout=False,
+                model_name=(model or {}).get("name", repo_id),
+                purpose=(model or {}).get("purpose", "unknown"),
+                incomplete_size_bytes=sum(
+                    _size_on_disk(snapshot)[0]
+                    for snapshot in (folder / "snapshots").iterdir()
+                    if snapshot not in complete_snapshots
+                ) if (folder / "snapshots").is_dir() else 0,
             ))
     return sorted(found, key=lambda model: (
         model.repo_id.casefold(),
@@ -541,16 +857,31 @@ def resolve_current_tier(
 def _format_size(byte_count):
     if byte_count >= 1_000_000_000:
         return f"{byte_count / 1_000_000_000:.2f} GB"
-    return f"{byte_count / 1_000_000:.1f} MB"
+    if byte_count >= 1_000_000:
+        return f"{byte_count / 1_000_000:.1f} MB"
+    if byte_count >= 1_000:
+        return f"{byte_count / 1_000:.1f} KB"
+    return f"{byte_count} B"
+
+
+def _format_gb(byte_count):
+    return f"{byte_count / 1_000_000_000:.3f} GB"
 
 
 def _print_model(model, output_fn=print):
     protected = " [protected]" if model.protected else ""
     complete = "complete" if model.complete else "incomplete"
+    name = model.model_name or model.repo_id
+    registry_size = (
+        _format_gb(model.registry_size_bytes)
+        if model.registry_size_bytes
+        else "not in registry"
+    )
+    mismatch = " | SIZE MISMATCH >10%" if model.size_mismatch else ""
     output_fn(
-        f"{model.status}{protected} | {model.repo_id} | "
-        f"{_format_size(model.size_bytes)} | {model.path} | "
-        f"{complete} | {model.reason}"
+        f"{model.status}{protected} | {name} ({model.repo_id}) | "
+        f"real {_format_gb(model.size_bytes)} | registry {registry_size} | "
+        f"{complete}{mismatch} | {model.path} | {model.reason}"
     )
     if model.is_external:
         output_fn(
@@ -591,6 +922,81 @@ def _safe_remove_model_folder(model):
     shutil.rmtree(folder)
 
 
+def _find_repo_info(cache_info, repo_id):
+    if cache_info is None:
+        return None
+    return next(
+        (repo for repo in cache_info.repos if repo.repo_id == repo_id),
+        None,
+    )
+
+
+def _prepare_cache_delete(model):
+    folder = Path(model.path)
+    cache_root = Path(model.cache_root).resolve()
+    if (
+        _is_reparse_point(folder)
+        or _contains_reparse_directory(folder)
+        or folder.name != "models--" + model.repo_id.replace("/", "--")
+        or folder.parent.resolve() != cache_root
+    ):
+        return None
+    cache_info, repo_info, strategy = _delete_strategy_for_revisions(
+        model,
+        model.revision_hashes,
+    )
+    if cache_info is None or repo_info is None or strategy is None:
+        return None
+    return cache_info, strategy, repo_info
+
+
+def _delete_with_cache_strategy(model, prepared, output_fn):
+    cache_info, strategy, repo_info = prepared
+    before_total = _cache_info_total_size(cache_info)
+    expected = int(strategy.expected_freed_size)
+    strategy.execute()
+
+    after_info = _scan_cache(model.cache_root)
+    after_total = _cache_info_total_size(after_info)
+    actual = before_total - after_total
+    after_repo = _find_repo_info(after_info, model.repo_id)
+    before_repo_size = int(repo_info.size_on_disk)
+    after_repo_size = (
+        int(after_repo.size_on_disk) if after_repo is not None else 0
+    )
+    output_fn(
+        f"Verified after deletion: cache size decreased by "
+        f"{_format_size(actual)} (expected "
+        f"{_format_size(expected)}); this repo decreased from "
+        f"{_format_size(before_repo_size)} to "
+        f"{_format_size(after_repo_size)}."
+    )
+    if actual != expected:
+        output_fn(
+            "WARNING: measured freed space differs from the Hugging Face "
+            "strategy estimate."
+        )
+    return actual
+
+
+def _delete_non_cache_folder(model, output_fn):
+    before, errors = _size_on_disk(model.path)
+    if errors:
+        output_fn(
+            "WARNING: Some files could not be measured before deletion: "
+            + "; ".join(errors)
+        )
+    _safe_remove_model_folder(model)
+    if Path(model.path).exists():
+        after, _ = _size_on_disk(model.path)
+    else:
+        after = 0
+    output_fn(
+        f"Verified after deletion: folder size decreased by "
+        f"{_format_size(before - after)}."
+    )
+
+
 def cleanup_models(
     models,
     apply=False,
@@ -598,7 +1004,6 @@ def cleanup_models(
     output_fn=print,
     remove_model_folder=None,
 ):
-    remove_model_folder = remove_model_folder or _safe_remove_model_folder
     for model in models:
         _print_model(model, output_fn)
     if not apply:
@@ -614,25 +1019,46 @@ def cleanup_models(
         ):
             output_fn(f"Keeping {model.repo_id}: IN USE models cannot be deleted.")
             continue
-        if not model.complete:
-            output_fn(
-                f"Keeping {model.repo_id}: the cache is incomplete or could "
-                "not be verified."
-            )
-            continue
         if model.is_external:
             output_fn(
                 "WARNING: Removing this shared cache entry may affect other "
                 "projects on this PC. The default response is no."
             )
+        prepared = None
+        if model.cache_layout and remove_model_folder is None:
+            prepared = _prepare_cache_delete(model)
+            if prepared is None:
+                output_fn(
+                    f"Keeping {model.repo_id}: no Hugging Face cached "
+                    "revision is available for a safe deletion strategy."
+                )
+                continue
+            _cache_info, strategy, _repo_info = prepared
+            expected_freed = int(strategy.expected_freed_size)
+            output_fn(
+                f"Hugging Face cache strategy expects to free "
+                f"{_format_size(expected_freed)}."
+            )
+        elif not model.complete:
+            output_fn(
+                f"INCOMPLETE: {model.repo_id} has unverified cache files; "
+                "delete only if you explicitly approve this folder."
+            )
+
+        incomplete_note = " [INCOMPLETE]" if not model.complete else ""
         prompt = (
-            f"Delete {model.repo_id} ({_format_size(model.size_bytes)}) "
-            f"at {model.path}? [y/N]: "
+            f"Delete {model.repo_id}{incomplete_note} "
+            f"({_format_size(model.size_bytes)}) at {model.path}? [y/N]: "
         )
         if not _confirm(prompt, input_fn):
             output_fn(f"Kept {model.repo_id}.")
             continue
-        remove_model_folder(model)
+        if remove_model_folder is not None:
+            remove_model_folder(model)
+        elif model.cache_layout:
+            _delete_with_cache_strategy(model, prepared, output_fn)
+        else:
+            _delete_non_cache_folder(model, output_fn)
         deleted.append(model)
         output_fn(f"Deleted {model.repo_id}.")
     if not deleted:
@@ -712,6 +1138,38 @@ def cleanup_voice_lab_recordings(
     return True
 
 
+def _print_inventory_summary(models, output_fn=print):
+    total_bytes = sum(model.size_bytes for model in models)
+    output_fn(f"Total model-cache size: {_format_gb(total_bytes)}")
+    incomplete_models = [
+        model for model in models
+        if model.incomplete_revisions or not model.complete
+    ]
+    output_fn("Partial or incomplete downloads:")
+    if not incomplete_models:
+        output_fn("  None found.")
+        return
+    for model in incomplete_models:
+        if model.cache_layout:
+            _info, _repo, strategy = _delete_strategy_for_revisions(
+                model,
+                model.incomplete_revisions,
+            )
+            unique_bytes = (
+                int(strategy.expected_freed_size)
+                if strategy is not None
+                else 0
+            )
+        else:
+            unique_bytes = model.incomplete_size_bytes
+        output_fn(
+            f"  {model.model_name or model.repo_id} ({model.repo_id}) | "
+            f"revision size {_format_size(model.incomplete_size_bytes)} | "
+            f"unique reclaimable {_format_size(unique_bytes)} | "
+            f"{model.path}"
+        )
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         description="Inventory and safely clean unused model cache folders."
@@ -751,6 +1209,7 @@ def main(argv=None):
         settings=settings,
         current_tier=tier,
     )
+    _print_inventory_summary(models)
     if not models:
         print("No downloaded model folders found.")
     cleanup_models(models, apply=args.apply)
